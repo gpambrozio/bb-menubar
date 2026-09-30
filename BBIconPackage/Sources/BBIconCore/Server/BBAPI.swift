@@ -24,6 +24,13 @@ public enum BBAPIError: MessageError, Equatable {
 
 /// bb 0.44.0's HTTP surface, as far as this app uses it: the snapshot reads
 /// and the open-thread request `bb thread open` makes.
+///
+/// A server target is a base URL plus `headers`, which ride on every request:
+/// none for this Mac's own bb, the relay's `x-bb-connect-machine` credential
+/// for a remote one. bb Icon sets no `Origin` of its own; bb's browser guard
+/// passes a request without one. A header value may be a credential, so a
+/// description, debug description, or `dump` of a `BBAPI` names the header
+/// fields and never their values.
 public struct BBAPI: Sendable {
     /// bb pages `/api/v1/threads` and does not document its default page
     /// size, so the size is always explicit.
@@ -33,10 +40,12 @@ public struct BBAPI: Sendable {
     public static let maxPages = 25
 
     private let serverURL: URL
+    private let headers: [String: String]
     private let http: any HTTPClient
 
-    public init(serverURL: URL, http: any HTTPClient) {
+    public init(serverURL: URL, headers: [String: String] = [:], http: any HTTPClient) {
         self.serverURL = serverURL
+        self.headers = headers
         self.http = http
     }
 
@@ -88,7 +97,7 @@ public struct BBAPI: Sendable {
     /// windows that navigated. `.noWindow` is still right when it fires, but
     /// it fires only when nothing at all is connected.
     public func openThread(_ threadId: String) async throws {
-        var request = URLRequest(url: try url(path: ["api", "v1", "threads", threadId, "open"], query: []))
+        var request = try request(path: ["api", "v1", "threads", threadId, "open"], query: [])
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data(#"{"file":null}"#.utf8)
@@ -103,7 +112,16 @@ public struct BBAPI: Sendable {
     private func getList<Element: Decodable>(
         _: Element.Type, path: [String], query: [URLQueryItem]
     ) async throws -> LenientList<Element> {
-        try await decode(LenientList<Element>.self, from: URLRequest(url: url(path: path, query: query)))
+        try await decode(LenientList<Element>.self, from: request(path: path, query: query))
+    }
+
+    /// Every request starts here, so none leaves without the target's headers.
+    private func request(path: [String], query: [URLQueryItem]) throws -> URLRequest {
+        var request = URLRequest(url: try url(path: path, query: query))
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        return request
     }
 
     /// Sends the request and decodes a 2xx body. A body that does not decode
@@ -144,5 +162,17 @@ public struct BBAPI: Sendable {
         components.fragment = nil
         guard let url = components.url else { throw URLError(.badURL) }
         return url
+    }
+}
+
+extension BBAPI: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        "BBAPI(\(serverURL.absoluteString), headers: \(redactedHeaderNames(headers)))"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(self, children: ["serverURL": serverURL, "headers": redactedHeaderNames(headers)], displayStyle: .struct)
     }
 }

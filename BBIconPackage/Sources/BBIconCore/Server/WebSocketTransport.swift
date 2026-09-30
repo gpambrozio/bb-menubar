@@ -15,6 +15,8 @@ public struct TransportClose: Equatable, Sendable {
     }
 }
 
+/// A header value may be a credential, so a description, debug description,
+/// or `dump` of a request names the header fields and never their values.
 public struct TransportRequest: Equatable, Sendable {
     public let url: URL
     public let headers: [String: String]
@@ -25,6 +27,28 @@ public struct TransportRequest: Equatable, Sendable {
         self.headers = headers
         self.subprotocols = subprotocols
     }
+}
+
+extension TransportRequest: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        "TransportRequest(\(url.absoluteString), headers: \(redactedHeaderNames(headers)), subprotocols: \(subprotocols))"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: ["url": url, "headers": redactedHeaderNames(headers), "subprotocols": subprotocols],
+            displayStyle: .struct
+        )
+    }
+}
+
+/// The header fields a value carries, sorted, without their values: what a
+/// description may show of a target's headers.
+func redactedHeaderNames(_ headers: [String: String]) -> [String] {
+    headers.keys.sorted()
 }
 
 /// One WebSocket-shaped connection. `URLSessionWebSocketTransport` is the real

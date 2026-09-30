@@ -79,10 +79,11 @@ struct RealtimeSessionTests {
         let log = Log()
         let session: RealtimeSession
 
-        init() throws {
+        init(headers: [String: String] = [:]) throws {
             let server = try #require(URL(string: "http://127.0.0.1:38886"))
             session = RealtimeSession(
                 serverURL: server,
+                headers: headers,
                 makeTransport: factory.make,
                 fetch: { @MainActor [fetcher] in try await fetcher.fetch() },
                 onStatus: { [log] in log.events.append(.status($0)) },
@@ -156,6 +157,41 @@ struct RealtimeSessionTests {
         #expect(transport.request.url.absoluteString == "ws://127.0.0.1:38886/ws")
         #expect(transport.connectCalls == 1)
         #expect(h.fetcher.calls == 0)
+        // A local target: no extra headers, and no Origin.
+        #expect(transport.request.headers.isEmpty)
+    }
+
+    @Test("a target's headers ride on the /ws upgrade, reconnects included, without an Origin")
+    func headersOnEveryDial() async throws {
+        let h = try Harness(headers: ["x-bb-connect-machine": "cred-test"])
+        h.session.start()
+        let first = try h.transport(0)
+        #expect(first.request.headers == ["x-bb-connect-machine": "cred-test"])
+        first.simulateClose()
+        await settle()
+        await h.clock.advance(by: .seconds(1))
+        await settle(until: { h.factory.transports.count == 2 })
+        let second = try h.transport(1)
+        #expect(second.request.headers == ["x-bb-connect-machine": "cred-test"])
+        for transport in h.factory.transports {
+            #expect(!transport.request.headers.keys.contains { $0.caseInsensitiveCompare("Origin") == .orderedSame })
+        }
+    }
+
+    @Test("describing or dumping the session or its request names header fields, never their values")
+    func descriptionsRedactHeaderValues() throws {
+        let h = try Harness(headers: ["x-bb-connect-machine": "cred-test"])
+        h.session.start()
+        let request = try h.transport(0).request
+        var dumpedRequest = ""
+        dump(request, to: &dumpedRequest)
+        var dumpedSession = ""
+        dump(h.session, to: &dumpedSession)
+        for text in [String(describing: request), String(reflecting: request), dumpedRequest, dumpedSession] {
+            #expect(!text.contains("cred-test"))
+        }
+        #expect(dumpedRequest.contains("x-bb-connect-machine"))
+        h.session.stop()
     }
 
     @Test("on open, subscribes to both lists and fetches at once")

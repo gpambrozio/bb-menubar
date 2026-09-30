@@ -123,6 +123,61 @@ struct BBAPITests {
         #expect(await http.requests.first?.url?.absoluteString == "http://127.0.0.1:1/bb/api/v1/projects")
     }
 
+    // MARK: - Headers
+
+    /// A remote target's header, with an obviously fake credential.
+    private static let remoteHeaders = ["x-bb-connect-machine": "cred-test"]
+
+    /// The projects, two thread pages, and an open: every kind of request
+    /// `BBAPI` makes.
+    private func sendEveryRequestKind(_ bbAPI: BBAPI, _ http: FakeHTTPClient) async throws {
+        await http.respond(Self.projects, body: #"[{"id":"proj_a","name":"web-app"}]"#)
+        await http.respond(Self.threadsPage(0), body: Self.rows(200, prefix: "thr_p0_"))
+        await http.respond(Self.threadsPage(1), body: "[]")
+        await http.respond("/api/v1/threads/thr_a/open", body: #"{"delivered":1}"#)
+        _ = try await bbAPI.fetchSnapshot()
+        try await bbAPI.openThread("thr_a")
+        #expect(await http.requestKeys == [
+            Self.projects, Self.threadsPage(0), Self.threadsPage(1), "/api/v1/threads/thr_a/open",
+        ])
+    }
+
+    @Test("a target's headers ride on every request: projects, each thread page, and open")
+    func headersOnEveryRequestKind() async throws {
+        let http = FakeHTTPClient()
+        let server = try #require(Self.server)
+        try await sendEveryRequestKind(BBAPI(serverURL: server, headers: Self.remoteHeaders, http: http), http)
+        for request in await http.requests {
+            #expect(request.value(forHTTPHeaderField: "x-bb-connect-machine") == "cred-test")
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+        }
+        // The open's own header survives the target's.
+        let open = try #require(await http.requests.last)
+        #expect(open.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
+
+    @Test("describing or dumping a BBAPI names its header fields, never their values")
+    func descriptionRedactsHeaderValues() throws {
+        let server = try #require(Self.server)
+        let bbAPI = BBAPI(serverURL: server, headers: Self.remoteHeaders, http: FakeHTTPClient())
+        var dumped = ""
+        dump(bbAPI, to: &dumped)
+        for text in [String(describing: bbAPI), String(reflecting: bbAPI), dumped] {
+            #expect(!text.contains("cred-test"))
+            #expect(text.contains("x-bb-connect-machine"))
+        }
+    }
+
+    @Test("a local target sends no extra headers, and no Origin")
+    func localTargetSendsNoHeaders() async throws {
+        let http = FakeHTTPClient()
+        try await sendEveryRequestKind(try api(http), http)
+        for request in await http.requests {
+            #expect(request.value(forHTTPHeaderField: "x-bb-connect-machine") == nil)
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+        }
+    }
+
     // MARK: - Failures
 
     @Test("HTTP 401 and 403 read as bb requiring authentication", arguments: [401, 403])

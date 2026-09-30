@@ -1,9 +1,10 @@
 import Foundation
 
 /// `WebSocketTransport` over `URLSessionWebSocketTask`. Ported from
-/// paseo-menubar unchanged but for the protocol's name. bb's `/ws` needs no
-/// headers or subprotocols; the request still carries them so the port stays
-/// a port.
+/// paseo-menubar unchanged but for the protocol's name. A local bb's `/ws`
+/// needs no headers; a remote one's upgrade carries the relay credential in
+/// the request's headers. bb's `/ws` needs no subprotocols; the request still
+/// carries them so the port stays a port.
 @MainActor
 public final class URLSessionWebSocketTransport: WebSocketTransport {
     public var onOpen: (() -> Void)?

@@ -72,7 +72,8 @@ public final class RealtimeSession {
         #"{"type":"subscribe","target":{"kind":"project-list"}}"#,
     ]
 
-    private let websocketURL: URL
+    /// The `/ws` URL and the target's headers, the same for every dial.
+    private let transportRequest: TransportRequest
     private let makeTransport: TransportFactory
     /// Must finish, with a value or an error, in bounded time: while it runs,
     /// every invalidation only marks the session `dirty`, so a fetch that
@@ -110,8 +111,12 @@ public final class RealtimeSession {
     private var intervalTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
 
+    /// `headers` ride on every `/ws` upgrade, as `BBAPI`'s ride on every
+    /// request: none for this Mac's own bb, the relay's credential for a
+    /// remote one. No `Origin` is added here.
     public init(
         serverURL: URL,
+        headers: [String: String] = [:],
         makeTransport: @escaping TransportFactory,
         fetch: @escaping @Sendable () async throws -> BBSnapshot,
         onStatus: @escaping (ConnectionStatus) -> Void,
@@ -121,7 +126,7 @@ public final class RealtimeSession {
         debounce: Duration = .milliseconds(250),
         minFetchInterval: Duration = .seconds(1)
     ) {
-        self.websocketURL = Self.websocketURL(for: serverURL)
+        self.transportRequest = TransportRequest(url: Self.websocketURL(for: serverURL), headers: headers)
         self.makeTransport = makeTransport
         self.fetch = fetch
         self.onStatus = onStatus
@@ -163,7 +168,7 @@ public final class RealtimeSession {
         reconnectTask = nil
         // Only ever one socket: never leave one open behind a new one.
         disposeTransport(code: 1001, reason: "Reconnecting")
-        let transport = makeTransport(TransportRequest(url: websocketURL))
+        let transport = makeTransport(transportRequest)
         self.transport = transport
         transport.onOpen = { [weak self, weak transport] in
             guard let self, self.isCurrent(transport) else { return }
