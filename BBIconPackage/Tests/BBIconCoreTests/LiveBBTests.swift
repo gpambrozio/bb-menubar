@@ -13,11 +13,10 @@ struct LiveBBTests {
 
     @Test("the running bb's snapshot decodes whole", .enabled(if: enabled))
     func liveSnapshotDecodes() async throws {
-        let runtimeFile = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".bb/bb-app-runtime.json")
-        // TODO(Task 7): use RuntimeFile.parse
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: runtimeFile)) as? [String: Any]
-        let serverURL = try #require((object?["serverUrl"] as? String).flatMap { URL(string: $0) })
-        let snapshot = try await BBAPI(serverURL: serverURL, http: URLSessionHTTPClient()).fetchSnapshot()
+        let runtimeFile = URL(fileURLWithPath: RuntimeFile.directory(home: NSHomeDirectory()))
+            .appending(path: RuntimeFile.fileName)
+        let info = try RuntimeFile.parse(Data(contentsOf: runtimeFile))
+        let snapshot = try await BBAPI(serverURL: info.serverURL, http: URLSessionHTTPClient()).fetchSnapshot()
         #expect(snapshot.decodeFailures.isEmpty)
         #expect(!snapshot.truncated)
     }
