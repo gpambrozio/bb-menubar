@@ -25,11 +25,11 @@ final class PairingWindowController: NSObject, NSWindowDelegate {
 
     /// Opens the window, or brings the open one forward. The app is an
     /// accessory, with no Dock icon and never frontmost on its own, so the
-    /// window is activated explicitly or it opens behind everything else.
+    /// window is put in front explicitly or it opens behind everything else
+    /// (see `Foreground`).
     func show(connect: @escaping Connect) {
         if let window {
-            NSApp.activate()
-            window.makeKeyAndOrderFront(nil)
+            Foreground.bring(window)
             return
         }
         let form = PairingForm()
@@ -50,8 +50,7 @@ final class PairingWindowController: NSObject, NSWindowDelegate {
         window.center()
         self.form = form
         self.window = window
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        Foreground.bring(window)
     }
 
     /// A stored pairing turned up while the window was open — the launch-time

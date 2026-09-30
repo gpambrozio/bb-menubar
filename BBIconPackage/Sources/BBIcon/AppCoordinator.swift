@@ -196,8 +196,7 @@ final class AppCoordinator {
             alert.addButton(withTitle: "Forget and Open getbb.app/dashboard")
             alert.addButton(withTitle: "Forget")
             alert.addButton(withTitle: "Cancel")
-            NSApp.activate()
-            let answer = alert.runModal()
+            let answer = Foreground.runModal(alert)
             guard answer == .alertFirstButtonReturn || answer == .alertSecondButtonReturn, let self else { return }
             self.flowBegan()
             defer { self.flowEnded() }
@@ -357,8 +356,7 @@ final class AppCoordinator {
                 alert.addButton(withTitle: action.title)
                 alert.addButton(withTitle: "Close")
             }
-            NSApp.activate()
-            let response = alert.runModal()
+            let response = Foreground.runModal(alert)
             if let action, response == .alertFirstButtonReturn { action.run() }
         }
     }

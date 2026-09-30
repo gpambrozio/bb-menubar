@@ -98,8 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // An accessory app is not frontmost, so without this the alert can
             // open behind every other window while the main thread sits in its
             // modal loop: no menu bar item, nothing to click, nothing to quit.
-            NSApp.activate()
-            alert.runModal()
+            Foreground.runModal(alert)
             NSApplication.shared.terminate(nil)
         }
     }
