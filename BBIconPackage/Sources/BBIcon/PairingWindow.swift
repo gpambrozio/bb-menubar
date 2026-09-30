@@ -1,4 +1,5 @@
 import AppKit
+import BBIconCore
 import SwiftUI
 
 /// The "Connect to a remote bb…" window: the design's instructions, a code
@@ -14,17 +15,10 @@ import SwiftUI
 /// Nothing here logs, prints, or keeps what was typed beyond the field.
 @MainActor
 final class PairingWindowController: NSObject, NSWindowDelegate {
-    /// What `connect` answers.
-    enum Outcome {
-        /// Nothing was paired; the sentence says why.
-        case failed(String)
-        /// Paired. A notice, when there is one, is shown before the window
-        /// closes, and the user closes it; without one it closes at once.
-        case paired(notice: String?)
-    }
-
-    /// Redeems what was typed, stores the pairing, and starts using it.
-    typealias Connect = @MainActor (String) async -> Outcome
+    /// Redeems what was typed, stores the pairing, and starts using it
+    /// (`PairingController.pair`). A notice in the answer is shown, and the
+    /// user closes the window; without one it closes at once.
+    typealias Connect = @MainActor (String) async -> PairOutcome
 
     private var window: NSWindow?
     private var form: PairingForm?

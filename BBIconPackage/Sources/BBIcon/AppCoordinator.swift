@@ -8,13 +8,8 @@ import SwiftUI
 /// the server connection follows it with a realtime session, the store holds
 /// the state, and the view model turns it into a menu. What lives here is what
 /// genuinely needs AppKit — `NSWorkspace`, the login item, alerts, the pairing
-/// window — plus the object graph that connects them, and the order of the
-/// pairing and Forget steps, each of which is a core call.
-///
-/// The Keychain is only ever touched off the main actor, on one serial queue:
-/// reading the item can block on a Keychain prompt (the first access after an
-/// update), and the menu bar item must not freeze behind it. The queue also
-/// keeps the store's operations in the order they were asked for.
+/// window — plus the object graph that connects them. Pairing, Forget, and
+/// the launch-time load are `PairingController`'s; this shows its answers.
 ///
 /// Neither session has cleanup in `deinit`, so `stop()` stops the runtime
 /// session and the server connection (which stops its realtime session)
@@ -30,24 +25,9 @@ final class AppCoordinator {
 
     @ObservationIgnored private let store: ThreadStore
     @ObservationIgnored private let connection: ServerConnection
-    /// The one HTTP client, shared by the server connection, redeem, and
-    /// revoke.
-    @ObservationIgnored private let http: any HTTPClient
-    @ObservationIgnored private let pairingStore: any PairingStore
-    /// The pairing in use, as last loaded or stored. Only its handle reaches
-    /// any view, through the store.
-    @ObservationIgnored private var pairing: Pairing?
-    /// Bumped whenever the user decides the pairing — a pair that was
-    /// stored, a Forget — so a slow launch-time load cannot land afterwards
-    /// and undo it.
-    @ObservationIgnored private var pairingGeneration = 0
-    /// Set from the moment `pair` queues its save until it has answered.
-    /// While it is set, the Keychain item is (or is about to be) the newer
-    /// pairing, not the one in memory, so a Forget does not delete it.
-    @ObservationIgnored private var saveInFlight = false
-    /// Set while a Forget is under way; confirming a second one meanwhile
-    /// does nothing, since the first is already forgetting the same pairing.
-    @ObservationIgnored private var forgetting = false
+    /// Loads, pairs, and forgets; the Keychain calls run on its own serial
+    /// queue, never the main thread, since a Keychain prompt blocks them.
+    @ObservationIgnored private let pairing: PairingController
     @ObservationIgnored private let pairingWindow = PairingWindowController()
     @ObservationIgnored private let watcher: DirectoryWatcher
     @ObservationIgnored private var runtimeSession: RuntimeSession?
@@ -63,15 +43,21 @@ final class AppCoordinator {
     init(pairingStore: any PairingStore = KeychainPairingStore()) {
         let store = ThreadStore()
         self.store = store
-        self.pairingStore = pairingStore
         // One HTTP client for the app's lifetime, shared by every server and
         // by getbb.app's redeem and revoke.
         let http = URLSessionHTTPClient()
-        self.http = http
-        connection = ServerConnection(
+        let connection = ServerConnection(
             store: store,
             http: http,
             makeTransport: { URLSessionWebSocketTransport(request: $0) }
+        )
+        self.connection = connection
+        pairing = PairingController(
+            store: pairingStore,
+            http: http,
+            executor: SerialQueuePairingStoreExecutor(label: "br.eng.gustavo.bb-menubar.keychain"),
+            threadStore: store,
+            connection: connection
         )
         watcher = DirectoryWatcher(
             // Throws while `~/.bb` does not exist, so the watcher stays
@@ -113,8 +99,8 @@ final class AppCoordinator {
         runtimeSession?.start()
     }
 
-    /// Idempotent: quitting from the menu calls it, and so does the app
-    /// delegate on termination.
+    /// Idempotent. The app delegate calls it on termination, however the app
+    /// was quit.
     func stop() {
         pairingWindow.close()
         runtimeSession?.stop()
@@ -183,14 +169,14 @@ final class AppCoordinator {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.pairingWindow.show(connect: { [weak self] input in
-                await self?.pair(input: input) ?? .failed("bb Icon is shutting down.")
+                await self?.pairing.pair(input: input) ?? .failed("bb Icon is shutting down.")
             })
         }
     }
 
-    /// Asks before forgetting the pairing with `handle`, then forgets it.
-    /// Deferred, as `report` is, so the modal alert does not run with the
-    /// panel still open.
+    /// Asks before forgetting the pairing with `handle`, then forgets it and
+    /// names whatever did not happen. Deferred, as `report` is, so the modal
+    /// alert does not run with the panel still open.
     func forgetRemote(handle: String) {
         Task { @MainActor [weak self] in
             let alert = NSAlert()
@@ -200,142 +186,42 @@ final class AppCoordinator {
             alert.addButton(withTitle: "Forget")
             alert.addButton(withTitle: "Cancel")
             NSApp.activate()
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            await self?.forget()
+            guard alert.runModal() == .alertFirstButtonReturn,
+                  let self,
+                  let outcome = await self.pairing.forget(),
+                  !outcome.problems.isEmpty
+            else { return }
+            self.report(
+                title: "bb Icon — forgetting \(outcome.handle) did not fully succeed",
+                detail: outcome.problems.joined(separator: "\n\n"),
+                action: outcome.revokeFailed ? AlertAction(title: "Open getbb.app/dashboard") {
+                    if let url = URL(string: "https://getbb.app/dashboard") { NSWorkspace.shared.open(url) }
+                } : nil
+            )
         }
     }
 
-    /// Reads the stored pairing at launch. A failure is the `.pairing` error
-    /// row, and the tray carries on as if there were none.
+    /// A pair or Forget is under way; see `AppDelegate`'s termination.
+    var isPairingBusy: Bool { pairing.isBusy }
+
+    /// Returns once no pair or Forget is under way.
+    func waitForPairing() async {
+        await pairing.waitUntilIdle()
+    }
+
+    /// Reads the stored pairing at launch. A pairing window opened before it
+    /// answered is told, so it does not offer to pair again.
     private func loadPairing() {
-        let generation = pairingGeneration
-        let pairingStore = self.pairingStore
         Task { [weak self] in
-            let result = await Self.onKeychainQueue { try pairingStore.load() }
-            guard let self, generation == self.pairingGeneration else { return }
-            switch result {
-            case .success(let pairing):
-                self.store.setError(.pairing, nil)
-                self.use(pairing)
-                // The window was opened before the stored pairing was known.
-                if let pairing { self.pairingWindow.alreadyPaired(handle: pairing.handle) }
-            case .failure(let error):
-                self.store.setError(.pairing, errorText(error))
-            }
+            guard let loaded = await self?.pairing.load() else { return }
+            self?.pairingWindow.alreadyPaired(handle: loaded.handle)
         }
     }
 
-    /// The pairing window's `connect`: parse what was typed, redeem it at
-    /// getbb.app, store the answer, and start using it.
-    ///
-    /// A code is spent once getbb.app has answered, so a pairing that cannot
-    /// be stored is revoked rather than kept only in memory: it would be lost
-    /// at the next launch and hold one of the account's machine slots. For
-    /// the same reason a pairing this one replaces (one that loaded while the
-    /// code was being redeemed) is revoked, best effort, once replaced.
-    ///
-    /// When this Mac's own bb is the server in use, the pairing is kept but
-    /// unused, and nothing in the tray changes except the Forget row. The
-    /// window says so rather than closing on what looks like no effect.
-    private func pair(input: String) async -> PairingWindowController.Outcome {
-        let pairing: Pairing
-        do {
-            pairing = try await ConnectPairing.redeem(code: ConnectPairing.parseInput(input), http: http)
-        } catch {
-            return .failed(errorText(error))
-        }
-        let pairingStore = self.pairingStore
-        saveInFlight = true
-        let saved = await Self.onKeychainQueue { try pairingStore.save(pairing) }
-        saveInFlight = false
-        if case .failure(let error) = saved {
-            let revokeFailure = await ConnectRevoke.revoke(pairing: pairing, http: http)
-            return .failed(([errorText(error), "The code has been used; make a new one to try again."]
-                + (revokeFailure.map { [$0] } ?? [])).joined(separator: " "))
-        }
-        pairingGeneration += 1
-        let replaced = self.pairing
-        store.setError(.pairing, nil)
-        use(pairing)
-
-        var notices: [String] = []
-        // Another server in use after `use` can only be this Mac's own bb,
-        // which wins over the pairing.
-        if let inUse = connection.serverURL, inUse != pairing.serverURL {
-            notices.append("Paired with \(pairing.handle). bb Icon will watch it whenever this Mac's own bb is not running.")
-        }
-        if let replaced, replaced != pairing,
-           let revokeFailure = await ConnectRevoke.revoke(pairing: replaced, http: http) {
-            notices.append(revokeFailure)
-        }
-        return .paired(notice: notices.isEmpty ? nil : notices.joined(separator: "\n\n"))
-    }
-
-    /// Stops using the pairing at once — the menu is back to "Connect to a
-    /// remote bb…" and the socket closed before anything slow happens — then
-    /// deletes the Keychain item, then revokes the pairing best effort with
-    /// the copy still in memory. The item is deleted whatever the revoke will
-    /// answer. Whatever did not happen is named in one alert afterwards.
-    ///
-    /// A pair whose save is still in flight has replaced the item with a
-    /// newer pairing, which this Forget was not about: it is left alone, and
-    /// that pair starts using it when its save answers.
-    private func forget() async {
-        guard !forgetting, let pairing else { return }
-        forgetting = true
-        defer { forgetting = false }
-        pairingGeneration += 1
-        use(nil)
-
-        let deleteFailure: String?
-        if saveInFlight {
-            deleteFailure = nil
-        } else {
-            let pairingStore = self.pairingStore
-            switch await Self.onKeychainQueue({ try pairingStore.delete() }) {
-            case .success:
-                store.setError(.pairing, nil)
-                deleteFailure = nil
-            case .failure(let error):
-                deleteFailure = errorText(error) + " bb Icon has stopped using it, but will read it again at its next launch."
-            }
-        }
-        let revokeFailure = await ConnectRevoke.revoke(pairing: pairing, http: http)
-
-        let problems = [revokeFailure, deleteFailure].compactMap { $0 }
-        guard !problems.isEmpty else { return }
-        report(
-            title: "bb Icon — forgetting \(pairing.handle) did not fully succeed",
-            detail: problems.joined(separator: "\n\n"),
-            action: revokeFailure == nil ? nil : AlertAction(title: "Open getbb.app/dashboard") {
-                if let url = URL(string: "https://getbb.app/dashboard") { NSWorkspace.shared.open(url) }
-            }
-        )
-    }
-
-    private func use(_ pairing: Pairing?) {
-        self.pairing = pairing
-        connection.setPairing(pairing)
-    }
-
-    /// The serial queue every Keychain call runs on.
-    private nonisolated static let keychainQueue = DispatchQueue(label: "br.eng.gustavo.bb-menubar.keychain")
-
-    /// Runs `work` on the Keychain queue and hands its outcome back to the
-    /// awaiting caller. A Keychain prompt blocks that queue, never the main
-    /// thread or a cooperative-pool thread.
-    private nonisolated static func onKeychainQueue<T: Sendable>(
-        _ work: @escaping @Sendable () throws -> T
-    ) async -> Result<T, any Error> {
-        await withCheckedContinuation { continuation in
-            keychainQueue.async {
-                continuation.resume(returning: Result { try work() })
-            }
-        }
-    }
-
+    /// Terminates through AppKit, which asks the delegate first: an
+    /// in-flight pair or Forget is let finish, and the delegate's
+    /// `applicationWillTerminate` then calls `stop()`.
     func quit() {
-        stop()
         NSApplication.shared.terminate(nil)
     }
 

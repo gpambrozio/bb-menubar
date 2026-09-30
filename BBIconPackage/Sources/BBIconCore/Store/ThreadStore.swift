@@ -34,10 +34,10 @@ public enum ConnectionStatus: String, CaseIterable, Sendable {
 public enum ErrorSource: Int, CaseIterable, Sendable {
     /// The runtime file could not be read.
     case runtime
-    /// The stored bb Connect pairing could not be read from the Keychain at
-    /// launch. Owned by the app, which is what talks to the store; no server
-    /// change or runtime poll touches it, so it stays until a pairing is
-    /// stored or forgotten.
+    /// The bb Connect pairing's Keychain item could not be read at launch,
+    /// written by a pair, or removed by a Forget. Owned by
+    /// `PairingController`; no server change or runtime poll touches it, so
+    /// it stays until the next Keychain operation succeeds.
     case pairing
     /// The snapshot fetch failed.
     case fetch
