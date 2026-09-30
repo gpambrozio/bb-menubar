@@ -29,13 +29,18 @@ public enum KeychainPairingStoreError: MessageError, Equatable, Sendable {
     }
 }
 
-/// The pairing as one generic-password item: the JSON-encoded `Pairing` as
-/// its data, accessible after first unlock and never synced or migrated to
-/// another device.
+/// The pairing as one generic-password item, the JSON-encoded `Pairing` as
+/// its data, in the login (file-based) keychain.
 ///
-/// This is the login (file-based) keychain, not the data protection
-/// keychain: the latter needs a keychain-access-groups entitlement, which an
-/// unsigned build does not have.
+/// Not the data protection keychain: that needs a keychain-access-groups
+/// entitlement, which an unsigned build does not have. The file-based
+/// keychain ignores `kSecAttrAccessible`, so the item is **not** limited to
+/// this device: it is never synced, but Migration Assistant carries it to a
+/// new Mac. `AfterFirstUnlockThisDeviceOnly` is still requested, for the day
+/// this moves to the data protection keychain; nothing here enforces it.
+///
+/// A loaded item is decoded through `Pairing`'s validating decoder, so an
+/// item naming a server outside getbb.app reads as `.unreadable`.
 public struct KeychainPairingStore: PairingStore {
     public static let defaultService = "br.eng.gustavo.bb-menubar.connect"
     /// One pairing per Mac, so one fixed account under the service.
@@ -65,8 +70,11 @@ public struct KeychainPairingStore: PairingStore {
         return pairing
     }
 
-    /// Adds the item, or replaces the data of the one already there, so a
-    /// failure part-way never leaves the Mac without its earlier pairing.
+    /// Adds the item. If one is already there it is deleted and the add
+    /// retried, never updated in place: an update keeps the existing item's
+    /// access list, and an item bb Icon did not create may let another
+    /// program read the credential. The cost is that a failed second add
+    /// leaves no pairing at all, which the thrown error names.
     public func save(_ pairing: Pairing) throws {
         guard let data = try? JSONEncoder().encode(pairing) else {
             throw KeychainPairingStoreError.unencodable
@@ -75,17 +83,12 @@ public struct KeychainPairingStore: PairingStore {
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         add[kSecAttrLabel as String] = "bb Icon bb Connect pairing"
-        let status = SecItemAdd(add as CFDictionary, nil)
-        switch status {
-        case errSecSuccess:
-            return
-        case errSecDuplicateItem:
-            let update = [kSecValueData as String: data] as CFDictionary
-            let updated = SecItemUpdate(itemQuery as CFDictionary, update)
-            guard updated == errSecSuccess else {
-                throw KeychainPairingStoreError.status(updated, operation: .save)
-            }
-        default:
+        var status = SecItemAdd(add as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            try delete()
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
             throw KeychainPairingStoreError.status(status, operation: .save)
         }
     }

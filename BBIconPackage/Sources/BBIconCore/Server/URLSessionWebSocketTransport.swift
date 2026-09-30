@@ -165,7 +165,8 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
 
     /// `Sendable` because `URLSession` calls it on its own queue; checked, not
     /// `@unchecked`, since its only state is two immutable `@Sendable` closures.
-    private final class Delegate: NSObject, URLSessionWebSocketDelegate, Sendable {
+    /// Internal rather than private so its redirect refusal is tested.
+    final class Delegate: NSObject, URLSessionWebSocketDelegate, Sendable {
         private let openHandler: @Sendable () -> Void
         private let closeHandler: @Sendable (Int, String) -> Void
 
@@ -185,6 +186,19 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
             reason: Data?
         ) {
             closeHandler(closeCode.rawValue, reason.flatMap { String(data: $0, encoding: .utf8) } ?? "")
+        }
+
+        /// The upgrade never follows a redirect, for the reason
+        /// `URLSessionHTTPClient` gives: it would carry the relay credential
+        /// to the `Location` host. The 3xx fails the handshake instead.
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping @Sendable (URLRequest?) -> Void
+        ) {
+            completionHandler(nil)
         }
     }
 }

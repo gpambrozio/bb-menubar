@@ -86,7 +86,11 @@ a small window:
   Keychain generic-password item (service `br.eng.gustavo.bb-menubar.connect`,
   accessible after first unlock, this device only). It is never written to a file,
   `UserDefaults`, a log, or any error text: the credential reaches the server's
-  command-executing API, so it is handled like a password.
+  command-executing API, so it is handled like a password. The item lives in the
+  file-based login keychain (the data protection keychain needs an entitlement an
+  unsigned build lacks), which ignores the accessibility attribute: it is requested for
+  forward compatibility but not enforced, so the item is never synced yet does migrate
+  to a new Mac with Migration Assistant.
 
 One pairing per Mac. Several remote servers remain deferred.
 

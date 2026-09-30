@@ -83,12 +83,13 @@ struct ConnectPairingTests {
     ])
     func redeemBuildsPairing(serverUrl: String, handle: String) async throws {
         let (pairing, _) = try await redeem(body: Self.answer(serverUrl: serverUrl))
-        #expect(pairing == Pairing(
+        let expected = try Pairing(
             serverURL: try #require(URL(string: "https://\(handle).getbb.app")),
             handle: handle,
             machineId: "m-test",
             credential: Self.credential
-        ))
+        )
+        #expect(pairing == expected)
     }
 
     @Test("names each refusal as bb does", arguments: [
@@ -103,6 +104,12 @@ struct ConnectPairingTests {
         (400, #"{"error":"invalid-code"}"#, .refused),
         (401, "", .refused),
         (404, "", .refused),
+        // Where the wire error and the status disagree, bb's order decides.
+        (409, #"{"error":"machine-limit"}"#, .machineLimit),
+        (500, #"{"error":"machine-limit"}"#, .machineLimit),
+        (410, #"{"error":"already-used"}"#, .alreadyUsed),
+        (409, #"{"error":"expired"}"#, .alreadyUsed),
+        (503, #"{"error":"expired"}"#, .expired),
         (200, "not json", .unreadableAnswer),
         (200, #"{"credential":"cred-test-never-shown","machineId":"m-test"}"#, .unreadableAnswer),
         (200, #"{"credential":"","machineId":"m-test","serverUrl":"https://mini.getbb.app"}"#, .unreadableAnswer),
@@ -110,6 +117,31 @@ struct ConnectPairingTests {
     ])
     func redeemRefusals(status: Int, body: String, expected: ConnectPairingError) async {
         #expect(await redeemError(status: status, body: body) == expected)
+    }
+
+    /// The credential goes into a request header, so anything but a plain
+    /// token could split or corrupt the header.
+    @Test("refuses a credential or machine id that is not a header-safe token", arguments: [
+        (#"cred test"#, "m-test"),
+        (#"cred-test\r\nx-evil: 1"#, "m-test"),
+        (#"cred-t\u00e9st"#, "m-test"),
+        (#"cred-test\t"#, "m-test"),
+        (String(repeating: "c", count: 4097), "m-test"),
+        ("cred-test", #"m test"#),
+        ("cred-test", #"m-test\n"#),
+        ("cred-test", String(repeating: "m", count: 4097)),
+    ])
+    func redeemRefusesUnsafeTokens(credential: String, machineId: String) async {
+        let body = #"{"credential":"\#(credential)","machineId":"\#(machineId)","serverUrl":"https://mini.getbb.app"}"#
+        #expect(await redeemError(status: 200, body: body) == .unreadableAnswer)
+    }
+
+    @Test("a 4096-character credential is still a credential")
+    func redeemAcceptsLongestToken() async throws {
+        let credential = String(repeating: "c", count: 4096)
+        let body = #"{"credential":"\#(credential)","machineId":"m-test","serverUrl":"https://mini.getbb.app"}"#
+        let (pairing, _) = try await redeem(body: body)
+        #expect(pairing.credential == credential)
     }
 
     @Test("refuses a server that is not one label under https://getbb.app", arguments: [
@@ -176,7 +208,7 @@ struct ConnectPairingTests {
 
     @Test("a pairing never shows its credential when printed, dumped, or reflected")
     func pairingRedactsCredential() throws {
-        let pairing = Pairing(
+        let pairing = try Pairing(
             serverURL: try #require(URL(string: "https://mini.getbb.app")),
             handle: "mini",
             machineId: "m-test",
@@ -201,7 +233,7 @@ struct ConnectPairingTests {
 
     @Test("a pairing survives its storage encoding whole")
     func pairingRoundTrips() throws {
-        let pairing = Pairing(
+        let pairing = try Pairing(
             serverURL: try #require(URL(string: "https://mini.getbb.app")),
             handle: "mini",
             machineId: "m-test",
@@ -209,6 +241,42 @@ struct ConnectPairingTests {
         )
         let data = try JSONEncoder().encode(pairing)
         #expect(try JSONDecoder().decode(Pairing.self, from: data) == pairing)
+    }
+
+    @Test("a pairing is only ever for https://<handle>.getbb.app, with header-safe tokens", arguments: [
+        ("https://evil.example", "mini", "m-test", "cred-test", PairingValidationError.serverURL),
+        ("https://other.getbb.app", "mini", "m-test", "cred-test", .serverURL),
+        ("http://mini.getbb.app", "mini", "m-test", "cred-test", .serverURL),
+        ("https://mini.getbb.app:8443", "mini", "m-test", "cred-test", .serverURL),
+        ("https://mini.getbb.app/elsewhere", "mini", "m-test", "cred-test", .serverURL),
+        ("https://Mini.getbb.app", "Mini", "m-test", "cred-test", .serverURL),
+        ("https://a.b.getbb.app", "a.b", "m-test", "cred-test", .serverURL),
+        ("https://mini.getbb.app", "mini", "", "cred-test", .machineId),
+        ("https://mini.getbb.app", "mini", "m test", "cred-test", .machineId),
+        ("https://mini.getbb.app", "mini", "m-test", "", .credential),
+        ("https://mini.getbb.app", "mini", "m-test", "cred\r\ntest", .credential),
+        ("https://mini.getbb.app", "mini", "m-test", "cr\u{e9}d", .credential),
+        ("https://mini.getbb.app", "mini", "m-test", String(repeating: "c", count: 4097), .credential),
+    ])
+    func pairingRefusesInvalidFields(
+        serverURL: String, handle: String, machineId: String, credential: String, expected: PairingValidationError
+    ) throws {
+        let url = try #require(URL(string: serverURL))
+        #expect(throws: expected) {
+            try Pairing(serverURL: url, handle: handle, machineId: machineId, credential: credential)
+        }
+    }
+
+    @Test("a stored pairing that names a foreign server does not decode")
+    func pairingDecodingValidates() throws {
+        let good = #"{"serverURL":"https://mini.getbb.app","handle":"mini","machineId":"m-test","credential":"cred-test"}"#
+        #expect(try JSONDecoder().decode(Pairing.self, from: Data(good.utf8)).handle == "mini")
+        for planted in [
+            #"{"serverURL":"https://evil.example","handle":"mini","machineId":"m-test","credential":"cred-test"}"#,
+            #"{"serverURL":"https://mini.getbb.app","handle":"mini","machineId":"m-test","credential":"cred\r\ntest"}"#,
+        ] {
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(Pairing.self, from: Data(planted.utf8)) }
+        }
     }
 }
 

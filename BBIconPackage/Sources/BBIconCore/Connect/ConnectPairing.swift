@@ -22,8 +22,9 @@ public enum ConnectPairingError: MessageError, Equatable, Sendable {
     /// getbb.app failed (HTTP ≥ 500) or never answered; the detail says which.
     case unreachable(String)
     case refused
-    /// A 2xx body that is not `{credential, machineId, serverUrl}`, or whose
-    /// `serverUrl` is not one label under getbb.app.
+    /// A 2xx body that is not `{credential, machineId, serverUrl}`, whose
+    /// `serverUrl` is not one label under getbb.app, or whose credential or
+    /// machine id is not a header-safe token (see `Pairing`).
     case unreadableAnswer
 
     public var message: String {
@@ -112,13 +113,14 @@ public enum ConnectPairing {
         // this case in one sentence, and the body it describes holds the
         // credential.
         guard let answer = try? JSONDecoder().decode(RedeemAnswer.self, from: data),
-              !answer.credential.isEmpty,
-              !answer.machineId.isEmpty,
               let serverUrl = answer.serverUrl,
               let handle = handle(forServerURL: serverUrl),
-              let serverURL = URL(string: "https://\(handle).\(apexHost)")
+              let serverURL = URL(string: "https://\(handle).\(apexHost)"),
+              let pairing = try? Pairing(
+                  serverURL: serverURL, handle: handle, machineId: answer.machineId, credential: answer.credential
+              )
         else { throw ConnectPairingError.unreadableAnswer }
-        return Pairing(serverURL: serverURL, handle: handle, machineId: answer.machineId, credential: answer.credential)
+        return pairing
     }
 
     /// bb 0.44.0's `codeForStatus`, in the same order.
