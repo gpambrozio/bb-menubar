@@ -967,6 +967,55 @@ struct RealtimeSessionTests {
         h.session.stop()
     }
 
+    @Test("a restart from inside reconnecting after a failed handshake gets none of the old failure")
+    func restartFromReconnectingDropsHandshakeFailure() async throws {
+        let h = try Harness()
+        h.session.start()
+        let first = try h.transport(0)
+        var restarted = false
+        h.log.onEvent = { [weak session = h.session] event in
+            guard case .status(.reconnecting) = event, !restarted else { return }
+            restarted = true
+            session?.stop()
+            session?.start()
+        }
+        first.simulateClose(code: 1006, reason: "refused")
+        await settle()
+        h.log.onEvent = nil
+        #expect(h.log.events == [.status(.connecting), .status(.reconnecting), .status(.connecting)])
+        #expect(h.factory.transports.count == 2)
+        #expect(try h.transport(1).closedWith == nil)
+        await h.clock.advance(by: .seconds(60))
+        await settle()
+        #expect(h.factory.transports.count == 2, "no reconnect armed for the old lifecycle")
+        h.session.stop()
+    }
+
+    @Test("a restart from inside reconnecting after a failed preparation gets none of the old failure")
+    func restartFromReconnectingDropsPreparationFailure() async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(prepareDial: Self.preparation(preparer))
+        h.session.start()
+        await settle(until: { preparer.waiting == 1 })
+        var restarted = false
+        h.log.onEvent = { [weak session = h.session] event in
+            guard case .status(.reconnecting) = event, !restarted else { return }
+            restarted = true
+            session?.stop()
+            session?.start()
+        }
+        preparer.fail(PrepareFailure(message: "could not start a session"))
+        await settle(until: { preparer.waiting == 1 })
+        await settle()
+        h.log.onEvent = nil
+        #expect(h.log.events == [.status(.connecting), .status(.reconnecting), .status(.connecting)])
+        #expect(preparer.calls == 2)
+        preparer.answer([:])
+        await settle(until: { h.factory.transports.count == 1 })
+        #expect(h.factory.transports.count == 1)
+        h.session.stop()
+    }
+
     @Test("start after stop connects afresh")
     func startAfterStop() async throws {
         let h = try Harness()

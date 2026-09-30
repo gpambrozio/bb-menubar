@@ -238,8 +238,9 @@ public final class RealtimeSession {
             dial(extraHeaders: extraHeaders)
         case .failure(let error):
             let text = scrubbed(errorText(error))
-            connectionLost()
-            guard running else { return }
+            // A stop, or a stop and start, from `.reconnecting` makes this
+            // failure another lifecycle's: it is not delivered into the new one.
+            guard connectionLost() else { return }
             onError(text)
         }
     }
@@ -296,8 +297,9 @@ public final class RealtimeSession {
     private func transportFailed(_ reason: String) {
         let wasOpen = isOpen
         let text = scrubbed("bb live updates: " + reason)
-        connectionLost()
-        guard !wasOpen, running else { return }
+        // As in `finishPreparing`: nothing from before a restart in
+        // `.reconnecting` reaches the new lifecycle.
+        guard connectionLost(), !wasOpen else { return }
         onError(text)
     }
 
@@ -315,8 +317,14 @@ public final class RealtimeSession {
 
     /// The close path, for a close, a transport error, or a failed fetch:
     /// drop this connection and try again after the current backoff.
-    private func connectionLost() {
-        guard running else { return }
+    ///
+    /// Returns whether the session is still in the lifecycle this started:
+    /// false when it was not running, or when `onStatus(.reconnecting)`
+    /// stopped it (and perhaps started it again). A caller with more to
+    /// report reports it only on true.
+    @discardableResult
+    private func connectionLost() -> Bool {
+        guard running else { return false }
         generation += 1
         let generation = self.generation
         resetConnectionState()
@@ -325,7 +333,7 @@ public final class RealtimeSession {
         // As in `start`: a stop from `onStatus` has already cancelled the
         // reconnect, so arming one now would outlive it and dial into
         // whatever session starts next.
-        guard running, generation == self.generation else { return }
+        guard running, generation == self.generation else { return false }
         let delay = backoff
         backoff = Self.nextBackoff(after: backoff)
         reconnectTask?.cancel()
@@ -333,6 +341,7 @@ public final class RealtimeSession {
             guard let self, self.running else { return }
             self.connect()
         }
+        return true
     }
 
     private func resetConnectionState() {
