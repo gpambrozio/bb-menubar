@@ -91,6 +91,17 @@ a small window:
   unsigned build lacks), which ignores the accessibility attribute: it is requested for
   forward compatibility but not enforced, so the item is never synced yet does migrate
   to a new Mac with Migration Assistant.
+- A Keychain failure — the item cannot be read at launch, or cannot be written or
+  removed — is its own error row, `ErrorSource.pairing`, naming the `OSStatus` and never
+  the item's data. It stays until the next Keychain operation succeeds. An item that is
+  there but does not decode as a valid pairing (including one naming a server outside
+  getbb.app) reads as unreadable, and the tray carries on as if unpaired, offering
+  **Connect to a remote bb…**, whose save replaces it.
+- A code is spent once getbb.app answers, so a pairing that cannot be stored is revoked
+  at once rather than kept only in memory, and the window says the code has been used.
+- Pairing while this Mac's own bb is running changes nothing in the tray but the footer
+  row, so the window does not just close: it says **Paired with `<handle>`. bb Icon will
+  watch it whenever this Mac's own bb is not running.** and the user closes it.
 
 One pairing per Mac. Several remote servers remain deferred.
 
@@ -99,7 +110,9 @@ One pairing per Mac. Several remote servers remain deferred.
 The same `BBAPI` and `RealtimeSession` serve both cases. A server target is a base URL plus
 extra headers: none for the local server, `x-bb-connect-machine` for a remote one, on every
 HTTP request and on the `/ws` upgrade. bb Icon sends no `Origin` header; the server's guard
-passes a request without one (`browser-request-guard.ts:146-152`).
+passes a request without one (`browser-request-guard.ts:146-152`). No request, and not
+the `/ws` upgrade, follows a redirect: `URLSession` would carry the header to whatever
+host `Location` names, so a 3xx is answered as a refusal.
 
 bb.app need not run on this Mac for bb Icon to watch a remote bb; only a row click needs it.
 
@@ -115,6 +128,16 @@ each case, as today. When a fetch or the socket fails, bb Icon asks
 | 2xx, and this server's `live` is false | `<handle>` is offline — the Mac running it may be asleep or bb may be closed there. |
 | no answer, or any other non-2xx | getbb.app could not be reached: … (the failure, or `HTTP <n>` for a 5xx, or `getbb.app answered HTTP <n>`) |
 | 2xx and `live` true | the original fetch or socket error, as today |
+| 2xx whose body, or this server's `live`, cannot be read | getbb.app sent something bb Icon cannot read at /api/connect/servers: … (the field) |
+
+The probe runs only for a remote target, and only on a failure the session reports: a
+lost connection, or a fetch or dial that fails while not connected. At most one runs at
+a time, so there is at most one per failed reconnect attempt and none while connected;
+until it answers, the last finding for the same trouble stands. An answer is dropped if
+the target changed (a local bb started, the pairing was forgotten or replaced) or a fetch
+succeeded since it was asked — not merely because the session re-dialled, which is the
+same trouble. The finding replaces the `.fetch` row's text rather than adding a row, so a
+server change clears it with the error it names.
 
 Reconnecting continues with the existing backoff (1 s ×1.5, capped at 30 s) in every
 case, so a Mac that wakes or a relay that recovers is picked up without a click. A
@@ -126,7 +149,7 @@ The layout is unchanged except for the status line and one footer row:
 
 | State | Status line | Extra footer row |
 | --- | --- | --- |
-| local bb (paired or not) | `bb · connected` (as today) | **Forget `<handle>`…** if paired |
+| local bb (paired or not) | `bb · connected` (as today) | **Forget `<handle>`…** if paired, else **Connect to a remote bb…** |
 | remote bb | `<handle> · connected` / `connecting` / `reconnecting` | **Forget `<handle>`…** |
 | neither | `bb is not running` | **Connect to a remote bb…** |
 

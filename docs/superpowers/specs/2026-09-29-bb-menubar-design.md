@@ -91,9 +91,13 @@ Paseo Icon's registry session), and treats bb as **running** when the file parse
 `pid` is alive, and an app with bundle id `dev.bb.desktop` is running
 (`NSWorkspace` launch/terminate notifications drive re-checks). The server URL comes
 only from this file — there is no configuration, no `BB_SERVER_URL`, no pairing.
+*Amended by `2026-09-30-bb-menubar-remote-design.md`:* the runtime file, then bb Icon's
+own bb Connect pairing — nothing else. This Mac's bb always wins; the paired remote bb is
+watched only while no local bb is running.
 
-Only the bb server that this Mac's bb.app uses is watched. A bb.app pointed at a remote
-server is out of scope for v1 (see Deferred).
+Only one bb server is watched at a time. A bb.app on this Mac pointed at a remote server
+is not followed; bb Icon pairs with that server as its own device instead (see the remote
+design).
 
 ### Snapshot
 
@@ -276,10 +280,12 @@ Names: display name **bb Icon**, bundle `BBIcon.app`, bundle id
 
 ## Deferred
 
+Watching a **remote** bb server (bb Connect) was deferred here; it has moved to
+`2026-09-30-bb-menubar-remote-design.md`, which pairs bb Icon with one remote server
+through a machine code. What that design still defers is listed there.
+
 - Signing, notarization, dmg, and the Homebrew cask (copy Paseo Icon's pipeline once
   the app works).
-- A bb.app connected to a **remote** bb server (bb Connect): needs the auth handshake
-  and a server URL the runtime file may not carry.
 - Several bb servers at once.
 - Resolving `@project:`/`@thread:` mention tokens in titles the way bb's sidebar does.
 - Keyboard navigation in the panel (a known gap inherited from Paseo Icon).

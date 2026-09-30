@@ -30,15 +30,28 @@ app.**
   running** with a button to open it. It picks back up by itself when bb comes
   back.
 - A **Start at login** option, so the icon is there whenever you log in.
-- Nothing to set up: bb Icon finds bb on its own.
+- Nothing to set up for the bb on your Mac: bb Icon finds it on its own.
+- Watch a bb running on another Mac. If your bb app connects to a bb on another
+  Mac through bb Connect, choose **Connect to a remote bb…** and paste a machine
+  code from that bb (Settings → Remote access → Add mobile device). The menu then
+  shows that bb's threads, and names it in the status line. The bb on your own
+  Mac always comes first when it is running.
+- **Forget** a remote bb to stop watching it. bb Icon asks bb Connect to remove
+  it from your devices, and tells you where to remove it by hand if that does
+  not work.
+- When a remote bb cannot be reached, the menu says why — the pairing was
+  revoked, the other Mac is asleep or bb is closed there, or bb Connect is
+  unreachable — and bb Icon keeps trying on its own.
 - When something goes wrong — bb changed in a way this version cannot read, or a
   thread could not be opened — the menu says what happened instead of quietly
   showing nothing.
 
 ### Known limitations
 
-- The app is not signed yet, so the first time you open it macOS asks you to
-  confirm (right-click the app and choose **Open**).
-- It only watches the bb app on the same Mac. A bb app connected to a remote bb
-  server is not supported yet.
+- There is no published download yet; you build the app yourself. A build
+  that is not signed and notarized is blocked the first time it is opened on
+  another Mac, until you allow it in System Settings → Privacy & Security.
+- Clicking a thread from a remote bb opens it in every bb app connected to that
+  bb, on every Mac and phone, not only on this Mac.
+- Only one remote bb can be watched at a time.
 - The menu cannot be navigated with the keyboard.

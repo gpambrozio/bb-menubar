@@ -1,7 +1,8 @@
 # AGENTS.md
 
 bb Icon is a macOS menu-bar indicator for [bb](https://getbb.app) threads. It shows
-whether any thread on this Mac's bb needs you, and opens a thread in the bb desktop app on
+whether any thread on this Mac's bb — or, when this Mac runs none, on the one remote bb it
+is paired with over bb Connect — needs you, and opens a thread in the bb desktop app on
 click. It is a status indicator and launcher — it never runs agents itself.
 
 It is the bb counterpart of Paseo Icon (`gpambrozio/paseo-menubar`, checked out at
@@ -18,9 +19,10 @@ around it. What is left at the repository root is build tooling under `scripts/`
 | Document | Standing |
 | --- | --- |
 | `docs/superpowers/specs/2026-09-29-bb-menubar-design.md` | **Binding** for behaviour: which threads, which bucket, what the menu says, how bb is reached. It has been amended during implementation; the amendments bind too. |
-| `docs/superpowers/plans/2026-09-29-bb-menubar.md` | Historical. Written before the code; review changed both afterwards, and the committed code wins. |
+| `docs/superpowers/specs/2026-09-30-bb-menubar-remote-design.md` | **Binding** amendment: watching a remote bb over bb Connect — pairing, the credential, which server wins, naming relay failures, Forget. Where it is silent, the original design binds. |
+| `docs/superpowers/plans/2026-09-29-bb-menubar.md`, `2026-09-30-bb-menubar-remote.md` | Historical. Written before the code; review changed both afterwards, and the committed code wins. |
 
-Read the design before non-trivial work. Do **not** implement from the plan.
+Read both designs before non-trivial work. Do **not** implement from the plan.
 
 ## Where logic goes
 
@@ -38,19 +40,25 @@ agent can see gets tested at all.
 | `BBIconCore/Runtime/DirectoryWatcher.swift` | Keeping the directory watch attached. |
 | `BBIconCore/Runtime/FSEventsWatch.swift` | The production watch: FSEvents with file-level events. Ported. |
 | `BBIconCore/Server/APIModels.swift` | Lenient thread and project rows. |
-| `BBIconCore/Server/HTTPClient.swift` | One HTTP round trip, injected. |
+| `BBIconCore/Server/HTTPClient.swift` | One HTTP round trip, injected. The production client and `RedirectRefusal`, which never follows a redirect. |
 | `BBIconCore/Server/BBAPI.swift` | The paged snapshot fetch, the open-thread POST, and `BBAPIError`. |
-| `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | One WebSocket connection, injected. Ported. |
+| `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | One WebSocket connection, injected. Ported. Its delegate refuses redirects on the upgrade. |
 | `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, re-fetch (at most once a second), reconnect. |
-| `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, and error rows. |
-| `BBIconCore/Store/ServerConnection.swift` | Following the runtime file: which server, its realtime session and API, the order of a server change, and which open-thread answer may land. |
+| `BBIconCore/Connect/ConnectCredential.swift` | `Pairing` (validated, credential redacted from every rendering) and the `PairingStore` protocol. |
+| `BBIconCore/Connect/ConnectPairing.swift` | Parse the pasted code or JSON, redeem it at getbb.app, validate the answer, name each refusal. |
+| `BBIconCore/Connect/KeychainPairingStore.swift` | The one Keychain item. `Security` only, so it is core. |
+| `BBIconCore/Connect/ConnectHealth.swift` | The `/api/connect/servers` probe and what each answer means. |
+| `BBIconCore/Connect/ConnectRevoke.swift` | Forget's best-effort revoke. |
+| `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, the remote server's name and the paired handle, and the error rows (`ErrorSource`; `.pairing` is a Keychain failure, owned by the app). |
+| `BBIconCore/Store/ServerConnection.swift` | Which server — this Mac's bb, else the pairing — its realtime session and API, the order of a server change, the relay probe for a failing remote, and which open-thread answer may land. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, and bb's list order. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Store state to icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | The menu as data. Every row, label, and rule. |
 | `BBIcon/TrayIcons.swift` | The five bucket glyphs as template images. |
 | `BBIcon/MenuBarLabel.swift` | The rendered menu bar item: glyph plus count, dimmed when not connected. |
 | `BBIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows. Decides nothing. |
-| `BBIcon/AppCoordinator.swift` | Wiring: the object graph, login item, alerts, `NSWorkspace`. |
+| `BBIcon/PairingWindow.swift` | The "Connect to a remote bb…" window: instructions, code field, the named failure. Decides nothing. |
+| `BBIcon/AppCoordinator.swift` | Wiring: the object graph, login item, alerts, `NSWorkspace`, the Keychain queue, and the order of the pair and Forget steps. |
 | `BBIcon/BBIconApp.swift` | The `MenuBarExtra` scene and the app delegate. |
 
 If you find yourself adding a decision to `AppCoordinator`, that is the signal to extract it
@@ -63,19 +71,35 @@ into `BBIconCore` instead.
   (unknown fields ignored, unknown status reads as idle, one bad row is dropped and named),
   and every other break must name itself in the menu: HTTP 401/403 says bb now requires
   authentication, a decode failure names the path and field, a socket that fails before
-  it opens says `bb live updates: …`. When bb Icon goes quiet after a bb update, that is a
-  bug here, not an acceptable failure mode.
+  it opens says `bb live updates: …`. For a remote bb, a failing fetch or socket is followed
+  by a probe of the relay's `/api/connect/servers` (also unsupported, from bb's
+  `connect-client`), whose finding — revoked, offline, unreachable — replaces the `.fetch`
+  row's text. When bb Icon goes quiet after a bb update, that is a bug here, not an
+  acceptable failure mode.
 - **The unread rule and the list order are copied from bb's bundle, not invented.** Unread
   is `(lastReadAt ?? 0) < latestAttentionAt`, the negation of bb 0.44.0's own read test
   (`(e.lastReadAt??0)>=e.latestAttentionAt`). Rows within a section sort by
   `latestAttentionAt` descending, then `createdAt` descending, then `id` ascending, as bb's
   list does. Both live in `Tray/Bucket.swift`. If bb changes either, copy the new one from
   its bundle and cite it; do not improve on it.
-- **The runtime file is the only server source.** `~/.bb/bb-app-runtime.json`, written by
-  bb.app (`dev.bb.desktop`) while it runs, is the only place the server URL comes from.
-  There is no configuration, no environment variable, no pairing, and no port scan. A file
-  whose `pid` is dead reads as not running — bb crashed without cleaning up — and is never
-  dialled.
+- **The runtime file, then the pairing — nothing else.** `~/.bb/bb-app-runtime.json`,
+  written by bb.app (`dev.bb.desktop`) while it runs, names this Mac's bb, and it always
+  wins. Only while no local bb is running does bb Icon watch the one remote bb it is paired
+  with, whose address is the stored pairing's `https://<handle>.getbb.app`. There is no
+  configuration, no environment variable, and no port scan, and bb.app's own
+  `server-target.json` is not read. A file whose `pid` is dead reads as not running — bb
+  crashed without cleaning up — and is never dialled.
+- **The bb Connect credential is a password.** It reaches a server whose API runs
+  commands. It lives only in memory and in the one Keychain item
+  (`br.eng.gustavo.bb-menubar.connect`) — never in a file, `UserDefaults`, a log line,
+  error text, a test failure, or a commit. `Pairing`'s `description`, `debugDescription`,
+  and `Mirror` redact it, and any failure text built around a request that carried it is
+  scrubbed (`scrubbing(_:from:)`). Redirects are refused on every HTTP request and on the
+  `/ws` upgrade, because `URLSession` would carry the `x-bb-connect-machine` header to
+  whatever host `Location` names. A `Pairing` can only point at `https://<handle>.getbb.app`
+  with one DNS label, checked at construction and again when the Keychain item is decoded;
+  a pasted payload whose `apex` is not `https://getbb.app` is refused before the code is
+  sent anywhere. Tests use obviously fake values like `cred-test`.
 - **Buckets, labels, and order are Paseo Icon's.** bb has no status buckets, so the five
   sections, their labels, their order (which is also icon priority), and their glyphs are
   exactly the spec's "Say what Paseo Icon says" table. The bucket mapping is the one place
@@ -115,6 +139,7 @@ npx vitest run                              # build tooling only
 npm run typecheck
 npm run icons                               # tray glyphs and the app icon
 BB_ICON_LIVE=1 swift test --package-path BBIconPackage --filter LiveBBTests
+BB_ICON_LIVE_REMOTE=1 swift test --package-path BBIconPackage --filter LiveRemoteTests
 npm run dist                                # unsigned release/native/BBIcon.app
 ```
 
@@ -176,6 +201,17 @@ running the app. Say so plainly rather than narrating a check you did not perfor
   ⌘Q still works.
 - **A bb that hangs while alive looks connected.** Nothing pings `/ws` after it opens, so
   the tray keeps its last snapshot. See the spec's Deferred list.
-- Only this Mac's bb.app, talking to its own local server, is watched. A bb.app connected
-  to a remote server, and several servers at once, are deferred.
-- Releases are unsigned and `arm64` only, with no auto-updater.
+- **Opening a thread on a remote bb opens it on every client of that server.** bb's open
+  endpoint has no per-client target, so a click switches bb windows on other Macs and the
+  phone too. This is what `bb thread open` does, and it was accepted for v1.
+- **The pairing migrates with Migration Assistant.** The item lives in the file-based login
+  keychain (the data protection keychain needs an entitlement an unsigned build lacks),
+  which ignores `kSecAttrAccessible`: it is never synced, but a new Mac set up from this
+  one inherits it.
+- **The relay's answers for a revoked pairing and an offline server have not been seen
+  live.** The probe classifies them from bb's sources; the wording the relay actually sends
+  is still to be checked by a human pairing a real client Mac, as is whether the relay lets
+  a device revoke itself.
+- One pairing per Mac, one server at a time. Several remote servers are deferred.
+- No release is published yet. `npm run dist` builds unsigned unless given a signing
+  identity; every build is `arm64` only, with no auto-updater.
