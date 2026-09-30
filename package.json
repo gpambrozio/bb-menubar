@@ -1,0 +1,23 @@
+{
+  "name": "bb-menubar",
+  "productName": "bb Icon",
+  "version": "0.1.0",
+  "description": "Menu-bar indicator for bb threads",
+  "author": "Gustavo Ambrozio",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test": "vitest run && swift test --package-path BBIconPackage",
+    "test:swift": "swift test --package-path BBIconPackage",
+    "icons": "node scripts/make-icons.mjs",
+    "dist": "npm run icons && node scripts/native-bundle.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "lucide-static": "1.42.0",
+    "sharp": "^0.35.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

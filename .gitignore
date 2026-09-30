@@ -1,0 +1,5 @@
+node_modules/
+release/
+assets/generated/
+BBIconPackage/.build/
+BBIconPackage/Sources/BBIcon/Resources/TrayIcons/*.png
