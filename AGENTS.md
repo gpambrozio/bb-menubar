@@ -35,6 +35,7 @@ agent can see gets tested at all.
 | --- | --- |
 | `BBIconCore/ErrorText.swift` | `MessageError` and `errorText`, the one narrowing every failure path shares. |
 | `BBIconCore/ClockTimer.swift` | The clock-driven timer both sessions use for debounce, backoff, and polling. |
+| `BBIconCore/ResourceBundleLocator.swift` | Finding the app target's resource bundle (the tray icons) without `Bundle.module`, in a fixed order, nil when absent. |
 | `BBIconCore/Runtime/RuntimeFile.swift` | Parse `~/.bb/bb-app-runtime.json`. No I/O. |
 | `BBIconCore/Runtime/RuntimeSession.swift` | Watch, debounce, poll, liveness, the "not running" state. |
 | `BBIconCore/Runtime/DirectoryWatcher.swift` | Keeping the directory watch attached. |
@@ -55,7 +56,7 @@ agent can see gets tested at all.
 | `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, and bb's list order. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Store state to icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | The menu as data. Every row, label, and rule. |
-| `BBIcon/TrayIcons.swift` | The five bucket glyphs as template images. |
+| `BBIcon/TrayIcons.swift` | The five bucket glyphs as template images, from the bundle `ResourceBundleLocator` finds. |
 | `BBIcon/MenuBarLabel.swift` | The rendered menu bar item: glyph plus count, dimmed when not connected. |
 | `BBIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows. Decides nothing. |
 | `BBIcon/PairingWindow.swift` | The "Connect to a remote bb…" window: instructions, code field, the named failure. Decides nothing. |
@@ -183,7 +184,11 @@ On this development machine `~/.npm` is root-owned, so `npm install` needs
 
 `npm run dist` regenerates the icons, then runs `scripts/native-bundle.mjs`, which builds
 the Swift package in release for `arm64`, assembles `release/native/BBIcon.app` around it,
-and renders the `.icns` from `assets/generated/icon.png`. With no `--identity` (and no
+and renders the `.icns` from `assets/generated/icon.png`. The resource bundle holding the
+tray icons goes into `Contents/Resources`, where `ResourceBundleLocator` looks first, and the
+script checks every icon is there before signing: nothing uses `Bundle.module`, because
+swift-6.1's generated accessor looks only beside the `.app` and at the absolute build path,
+then calls `fatalError`, so a moved app would trap before its menu bar item existed. With no `--identity` (and no
 `CODESIGN_IDENTITY`) it stops there, unsigned. With one it signs, and then notarizes unless
 `--skip-notarize` is passed. The dmg and Homebrew cask are deferred; copy Paseo Icon's
 pipeline when they are wanted.

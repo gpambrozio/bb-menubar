@@ -8,12 +8,35 @@ import BBIconCore
 enum TrayIcons {
     private static var cache: [ThreadBucket: NSImage] = [:]
 
+    /// The resource bundle SwiftPM emits for this target, `<package>_<target>`.
+    /// `native-bundle.mjs` copies it into the app's `Contents/Resources`, and
+    /// its test holds the two names together.
+    static let resourceBundleName = "BBIconPackage_BBIcon.bundle"
+
+    /// Found by `ResourceBundleLocator` rather than `Bundle.module`, whose
+    /// generated accessor traps when the bundle is not where the builder's
+    /// SwiftPM expects it. Nil when it is nowhere, which `image` names.
+    private static let resourceBundle: Bundle? = {
+        let main = Bundle.main
+        let url = ResourceBundleLocator.locate(
+            bundleName: resourceBundleName,
+            resourceURL: main.resourceURL,
+            bundleURL: main.bundleURL,
+            executableURL: main.executableURL
+        ) { url in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+        return url.flatMap(Bundle.init(url:))
+    }()
+
     /// A missing file yields an empty image rather than an error, and an empty
     /// image is a status item with no visible icon: no way to open the menu,
     /// no way to quit. The icons are generated rather than committed, so this
     /// is reachable from a build that skipped `npm run icons`.
     static func image(for bucket: ThreadBucket) throws -> NSImage {
         if let cached = cache[bucket] { return cached }
+        guard let bundle = resourceBundle else { throw TrayIconError.missingBundle(resourceBundleName) }
         let name = TrayViewModelBuilder.iconNames[bucket] ?? bucket.rawValue
         // Both rasterizations, not just the 1x one. `NSImage(contentsOf:)` on a
         // single file yields a single representation, so a Retina menu bar
@@ -29,7 +52,7 @@ enum TrayIcons {
         // silently.
         for suffix in ["", "@2x"] {
             let file = "\(name)Template\(suffix)"
-            guard let url = Bundle.module.url(forResource: file, withExtension: "png", subdirectory: "TrayIcons"),
+            guard let url = bundle.url(forResource: file, withExtension: "png", subdirectory: "TrayIcons"),
                   let rep = NSImageRep(contentsOf: url) else {
                 throw TrayIconError.missing(file)
             }
@@ -51,10 +74,14 @@ enum TrayIcons {
 
 enum TrayIconError: MessageError {
     case missing(String)
+    case missingBundle(String)
 
     var message: String {
         switch self {
         case .missing(let file): "Missing tray icon: \(file).png. Run `npm run icons`."
+        case .missingBundle(let name):
+            "Missing \(name), which holds the tray icons, in the app's Resources and beside its executable. "
+                + "Run `npm run icons`, then rebuild (`npm run dist` for the app)."
         }
     }
 }

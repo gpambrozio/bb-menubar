@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,14 +11,19 @@ import {
   MIN_MACOS,
   PACKAGE_DIR,
   RESOURCE_BUNDLE,
+  TRAY_ICON_FILES,
   infoPlist,
   parseArgs,
+  resourceBundlePath,
   swiftBuildArgs,
+  verifyTrayIcons,
 } from "./native-bundle.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const README_PATH = path.join(ROOT, "README.md");
 const MANIFEST_PATH = path.join(ROOT, "BBIconPackage", "Package.swift");
+const TRAY_ICONS_SWIFT = path.join(ROOT, "BBIconPackage", "Sources", "BBIcon", "TrayIcons.swift");
+const LOCATOR_SWIFT = path.join(ROOT, "BBIconPackage", "Sources", "BBIconCore", "ResourceBundleLocator.swift");
 
 describe("the bundle's names", () => {
   it("are the ones the spec fixes", () => {
@@ -88,11 +94,77 @@ describe("swiftBuildArgs", () => {
 
   it("names the resource bundle SwiftPM emits for the app target", async () => {
     // SwiftPM names it `<package>_<target>.bundle`; the tray icons live in it
-    // and `Bundle.module` finds them there.
+    // and the app's `ResourceBundleLocator` finds it by that name.
     const manifest = await readFile(MANIFEST_PATH, "utf8");
     const packageName = manifest.match(/name:\s*"([^"]+)"/)?.[1];
     expect(RESOURCE_BUNDLE).toBe(`${packageName}_${BUNDLE_NAME}.bundle`);
   });
+});
+
+describe("where the resource bundle goes", () => {
+  it("is Contents/Resources, the first place the app looks", async () => {
+    // `Bundle.module` is not used: swift-6.1's accessor looks beside the .app
+    // and then at the absolute build path, and traps when neither exists.
+    // The app's locator tries `Bundle.main.resourceURL` first instead.
+    expect(resourceBundlePath("/x/BBIcon.app")).toBe(`/x/BBIcon.app/Contents/Resources/${RESOURCE_BUNDLE}`);
+    const locator = await readFile(LOCATOR_SWIFT, "utf8");
+    expect(locator).toMatch(/let directories = \[resourceURL,/);
+    const trayIcons = await readFile(TRAY_ICONS_SWIFT, "utf8");
+    expect(trayIcons).toContain(`resourceBundleName = "${RESOURCE_BUNDLE}"`);
+    expect(trayIcons).toMatch(/resourceURL: main\.resourceURL/);
+    expect(trayIcons).not.toMatch(/Bundle\.module\./);
+  });
+
+  it("needs every tray icon at 1x and 2x", () => {
+    expect(TRAY_ICON_FILES).toContain("doneTemplate.png");
+    expect(TRAY_ICON_FILES).toContain("doneTemplate@2x.png");
+    expect(TRAY_ICON_FILES).toHaveLength(10);
+  });
+});
+
+describe("verifyTrayIcons", () => {
+  /** @param {(app: string) => Promise<void>} body */
+  async function withApp(body) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bb-icon-bundle-"));
+    try {
+      await body(path.join(dir, "BBIcon.app"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** @param {string} dir @param {string[]} files */
+  async function writeIcons(dir, files) {
+    await mkdir(dir, { recursive: true });
+    for (const file of files) await writeFile(path.join(dir, file), "png");
+  }
+
+  it("finds every icon in the relocated bundle", () =>
+    withApp(async (app) => {
+      const dir = path.join(resourceBundlePath(app), "Contents", "Resources", "TrayIcons");
+      await writeIcons(dir, TRAY_ICON_FILES);
+      await expect(verifyTrayIcons(app)).resolves.toBe(dir);
+    }));
+
+  it("accepts a flat bundle too", () =>
+    withApp(async (app) => {
+      const dir = path.join(resourceBundlePath(app), "TrayIcons");
+      await writeIcons(dir, TRAY_ICON_FILES);
+      await expect(verifyTrayIcons(app)).resolves.toBe(dir);
+    }));
+
+  it("names a missing icon", () =>
+    withApp(async (app) => {
+      const dir = path.join(resourceBundlePath(app), "Contents", "Resources", "TrayIcons");
+      await writeIcons(dir, TRAY_ICON_FILES.filter((file) => file !== "failedTemplate@2x.png"));
+      await expect(verifyTrayIcons(app)).rejects.toThrow(/failedTemplate@2x\.png.*npm run icons/);
+    }));
+
+  it("refuses a bundle left beside the .app, where Resources does not have it", () =>
+    withApp(async (app) => {
+      await writeIcons(path.join(app, RESOURCE_BUNDLE, "Contents", "Resources", "TrayIcons"), TRAY_ICON_FILES);
+      await expect(verifyTrayIcons(app)).rejects.toThrow(/no tray icons/);
+    }));
 });
 
 describe("parseArgs", () => {

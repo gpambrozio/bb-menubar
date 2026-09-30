@@ -19,10 +19,11 @@ const BB_LOGO_PATH = path.join(REPO_ROOT, "assets", "bb-logo.svg");
 function outputDirs(root) {
   return {
     generated: path.join(root, "assets", "generated"),
-    // The native app loads the tray glyphs through `Bundle.module`, so they
-    // have to live inside the Swift target rather than beside it. Written here
-    // rather than copied by a build step, so `swift run` and a packaged build
-    // see the same files and neither can go stale against the other.
+    // The native app loads the tray glyphs from its target's resource
+    // bundle, so they have to live inside the Swift target rather than beside
+    // it. Written here rather than copied by a build step, so `swift run` and
+    // a packaged build see the same files and neither can go stale against
+    // the other.
     trayIcons: path.join(root, "BBIconPackage", "Sources", "BBIcon", "Resources", "TrayIcons"),
   };
 }

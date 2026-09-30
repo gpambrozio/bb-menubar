@@ -14,9 +14,11 @@
 
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { GLYPHS } from "./make-icons.mjs";
 
 /** The bundle directory and executable name. Not the display name. */
 export const BUNDLE_NAME = "BBIcon";
@@ -33,6 +35,65 @@ export const MIN_MACOS = "14.0";
 export const PACKAGE_DIR = "BBIconPackage";
 /** The resource bundle SwiftPM emits beside the executable: `<package>_<target>.bundle`. */
 export const RESOURCE_BUNDLE = `${PACKAGE_DIR}_${BUNDLE_NAME}.bundle`;
+
+/**
+ * Where the app carries the resource bundle: `Contents/Resources`, the first
+ * place the app's `ResourceBundleLocator` looks. Not `Bundle.module`, whose
+ * swift-6.1 accessor looks beside the `.app` itself and then at the absolute
+ * build path, and traps when neither exists -- as on any other Mac.
+ *
+ * @param {string} app
+ */
+export function resourceBundlePath(app) {
+  return path.join(app, "Contents", "Resources", RESOURCE_BUNDLE);
+}
+
+/** Every tray icon file the app refuses to start without: 1x and 2x per glyph. */
+export const TRAY_ICON_FILES = Object.keys(GLYPHS).flatMap((stem) => [`${stem}Template.png`, `${stem}Template@2x.png`]);
+
+/** @param {string} p */
+async function isDirectory(p) {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks, without launching the app, that the relocated resource bundle holds
+ * every tray icon. SwiftPM lays a macOS resource bundle out with
+ * `Contents/Resources`; `Bundle` reads a flat one too, so either is accepted.
+ * Returns the directory the icons are in; throws naming what is missing.
+ *
+ * @param {string} app
+ */
+export async function verifyTrayIcons(app) {
+  const bundle = resourceBundlePath(app);
+  const candidates = [path.join(bundle, "Contents", "Resources", "TrayIcons"), path.join(bundle, "TrayIcons")];
+  let dir;
+  for (const candidate of candidates) {
+    if (await isDirectory(candidate)) {
+      dir = candidate;
+      break;
+    }
+  }
+  if (dir === undefined) {
+    throw new Error(`The app has no tray icons: neither ${candidates.map((c) => path.relative(app, c)).join(" nor ")} exists.`);
+  }
+  const missing = [];
+  for (const file of TRAY_ICON_FILES) {
+    try {
+      if (!(await stat(path.join(dir, file))).isFile()) missing.push(file);
+    } catch {
+      missing.push(file);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`The app is missing tray icons in ${path.relative(app, dir)}: ${missing.join(", ")}. Run \`npm run icons\` first (\`npm run dist\` does).`);
+  }
+  return dir;
+}
 
 /** notarytool takes credentials on argv, so nothing here echoes its command. */
 const CREDENTIAL_ENV = ["APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"];
@@ -200,8 +261,8 @@ async function buildIcns(root, resourcesDir) {
 /**
  * Builds, then assembles the bundle from the release build. The tray PNGs come
  * from the Swift package's own resource bundle, which `swift build` produces
- * beside the executable, so the app finds them through `Bundle.module` exactly
- * as it does under `swift run`.
+ * beside the executable; it goes into `Contents/Resources` (see
+ * `resourceBundlePath`), and is checked there before anything is signed.
  *
  * @param {{ root: string, version: string }} options
  */
@@ -224,7 +285,8 @@ export async function buildBundle({ root, version }) {
 
   await runOrThrow("cp", [path.join(binDir, BUNDLE_NAME), path.join(macos, BUNDLE_NAME)], "Copying the executable");
   // The resource bundle SwiftPM emits for the app target, carrying the tray icons.
-  await runOrThrow("cp", ["-R", path.join(binDir, RESOURCE_BUNDLE), resources], "Copying resources");
+  await runOrThrow("cp", ["-R", path.join(binDir, RESOURCE_BUNDLE), path.dirname(resourceBundlePath(app))], "Copying resources");
+  await verifyTrayIcons(app);
   await writeFile(path.join(app, "Contents", "Info.plist"), infoPlist({ version }));
   await writeFile(path.join(app, "Contents", "PkgInfo"), "APPL????");
   await buildIcns(root, resources);
