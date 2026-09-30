@@ -141,4 +141,12 @@ struct KeychainPairingStoreTests {
         #expect(message.hasPrefix("bb Icon could not save its bb Connect pairing in the Keychain: "))
         #expect(message.hasSuffix("(OSStatus -25293)"))
     }
+
+    /// An unreadable item is found at load, when there is no pairing to
+    /// forget and the menu offers Connect, which saves over the item.
+    @Test("an unreadable item points to pairing again, not to Forget")
+    func unreadableMessage() {
+        #expect(KeychainPairingStoreError.unreadable.message
+            == "bb Icon's bb Connect pairing in the Keychain cannot be read. Connect to a remote bb again to replace it.")
+    }
 }

@@ -11,7 +11,10 @@ public enum KeychainPairingStoreError: MessageError, Equatable, Sendable {
     }
 
     case status(OSStatus, operation: Operation)
-    /// An item exists but is not a pairing this version can read.
+    /// An item exists but is not a pairing this version can read. It is
+    /// only ever met at load, when there is no pairing in memory and the menu
+    /// offers **Connect to a remote bb…** rather than Forget; pairing again
+    /// saves over the item.
     case unreadable
     /// The pairing could not be encoded to be stored.
     case unencodable
@@ -22,7 +25,7 @@ public enum KeychainPairingStoreError: MessageError, Equatable, Sendable {
             let text = SecCopyErrorMessageString(status, nil) as String? ?? "unknown error"
             return "bb Icon could not \(operation.rawValue) its bb Connect pairing in the Keychain: \(text) (OSStatus \(status))"
         case .unreadable:
-            return "bb Icon's bb Connect pairing in the Keychain cannot be read. Forget it and pair again."
+            return "bb Icon's bb Connect pairing in the Keychain cannot be read. Connect to a remote bb again to replace it."
         case .unencodable:
             return "bb Icon could not prepare its bb Connect pairing for the Keychain."
         }
