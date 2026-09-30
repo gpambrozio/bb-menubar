@@ -177,7 +177,11 @@ public final class RealtimeSession {
         running = true
         backoff = Self.initialBackoff
         lastStatus = nil
+        let generation = self.generation
         emitStatus(.connecting)
+        // `onStatus` may have stopped the session, or stopped and started it
+        // again (which dialled already): either way this dial is not wanted.
+        guard running, generation == self.generation else { return }
         connect()
     }
 
@@ -314,9 +318,14 @@ public final class RealtimeSession {
     private func connectionLost() {
         guard running else { return }
         generation += 1
+        let generation = self.generation
         resetConnectionState()
         disposeTransport(code: 1001, reason: "Reconnecting")
         emitStatus(.reconnecting)
+        // As in `start`: a stop from `onStatus` has already cancelled the
+        // reconnect, so arming one now would outlive it and dial into
+        // whatever session starts next.
+        guard running, generation == self.generation else { return }
         let delay = backoff
         backoff = Self.nextBackoff(after: backoff)
         reconnectTask?.cancel()

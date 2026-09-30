@@ -76,6 +76,11 @@ struct RealtimeSessionTests {
         }
     }
 
+    /// `preparer` as a session's dial preparation.
+    static func preparation(_ preparer: FakePreparer) -> RealtimeSession.DialPreparation {
+        { @MainActor [preparer] in try await preparer.prepare() }
+    }
+
     struct PrepareFailure: MessageError {
         let message: String
     }
@@ -891,6 +896,75 @@ struct RealtimeSessionTests {
         #expect(h.log.statuses == [.connecting])
         #expect(h.factory.transports.count == 1)
         h.log.onEvent = nil
+    }
+
+    @Test("a stop from inside connecting dials nothing and prepares nothing", arguments: [false, true])
+    func stopFromConnectingDialsNothing(prepared: Bool) async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(prepareDial: prepared ? Self.preparation(preparer) : nil)
+        h.log.onEvent = { [weak session = h.session] event in
+            if case .status(.connecting) = event { session?.stop() }
+        }
+        h.session.start()
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        await settle()
+        #expect(h.factory.transports.isEmpty, "a socket opened while stopped could never be closed")
+        #expect(preparer.calls == 0)
+        #expect(h.log.statuses == [.connecting])
+        h.log.onEvent = nil
+    }
+
+    @Test("a stop and start from inside connecting leaves the restarted dial alone")
+    func restartFromConnectingDialsOnce() async throws {
+        let h = try Harness()
+        var restarted = false
+        h.log.onEvent = { [weak session = h.session] event in
+            guard case .status(.connecting) = event, !restarted else { return }
+            restarted = true
+            session?.stop()
+            session?.start()
+        }
+        h.session.start()
+        await settle()
+        #expect(h.factory.transports.count == 1)
+        #expect(try h.transport(0).closedWith == nil)
+        h.log.onEvent = nil
+        h.session.stop()
+    }
+
+    @Test("a stop from inside reconnecting arms no reconnect to outlive it", arguments: [false, true])
+    func stopFromReconnectingRedialsNothing(prepared: Bool) async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(prepareDial: prepared ? Self.preparation(preparer) : nil)
+        h.session.start()
+        if prepared {
+            await settle(until: { preparer.waiting == 1 })
+            preparer.answer([:])
+        }
+        await settle(until: { h.factory.transports.count == 1 })
+        h.log.onEvent = { [weak session = h.session] event in
+            if case .status(.reconnecting) = event { session?.stop() }
+        }
+        try h.transport(0).simulateClose()
+        await settle()
+        h.log.onEvent = nil
+        #expect(h.log.statuses == [.connecting, .reconnecting])
+
+        // A reconnect armed after that stop would fire into the next session,
+        // replacing its socket (or preparing a second dial).
+        h.session.start()
+        if prepared {
+            await settle(until: { preparer.waiting == 1 })
+            preparer.answer([:])
+        }
+        await settle(until: { h.factory.transports.count == 2 })
+        await h.clock.advance(by: .seconds(60))
+        await settle()
+        #expect(h.factory.transports.count == 2)
+        #expect(preparer.calls == (prepared ? 2 : 0))
+        #expect(try h.transport(1).closedWith == nil)
+        h.session.stop()
     }
 
     @Test("start after stop connects afresh")
