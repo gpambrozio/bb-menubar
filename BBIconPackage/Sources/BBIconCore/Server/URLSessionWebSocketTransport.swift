@@ -151,7 +151,8 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
     /// `receive()` throws when the socket ends for any reason. If the server
     /// sent a close frame, the task already carries its code and reason; a
     /// dropped connection or a failed handshake carries neither and reports
-    /// as 1006 with the error text.
+    /// as 1006 with the error text, which for a refused upgrade names the
+    /// server's status.
     private func handleReceiveFailure(_ error: any Error, task: URLSessionWebSocketTask) {
         // `task === self.task` is the whole point: a receive loop cancelled by
         // `connect()` still throws and still lands here, and by then `closed`
@@ -159,14 +160,26 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         // the socket its successor just opened — reporting a close the owner
         // never caused.
         guard !closed, task === self.task else { return }
-        onError?(error.localizedDescription)
+        let text = Self.failureText(error, response: task.response)
+        onError?(text)
         let closeCode = task.closeCode
         if closeCode == .invalid {
-            finish(code: 1006, reason: error.localizedDescription)
+            finish(code: 1006, reason: text)
         } else {
             let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             finish(code: closeCode.rawValue, reason: reason)
         }
+    }
+
+    /// What a socket that ended says about why. An upgrade the server
+    /// answered with anything but 101 is named by that status: `URLSession`'s
+    /// own text for it, "There was a bad response from the server.", does not
+    /// say whether the server refused (a 401 from the relay) or broke.
+    static func failureText(_ error: any Error, response: URLResponse?) -> String {
+        if let http = response as? HTTPURLResponse, http.statusCode != 101 {
+            return "the server refused the connection (HTTP \(http.statusCode))"
+        }
+        return error.localizedDescription
     }
 
     private func deliverOpen(generation: Int) {

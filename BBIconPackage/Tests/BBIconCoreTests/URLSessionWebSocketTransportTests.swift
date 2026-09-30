@@ -36,6 +36,29 @@ struct URLSessionWebSocketTransportTests {
         #expect(head.headerValue("Origin") == nil)
     }
 
+    @Test("an upgrade the server refuses is named by its status", arguments: [
+        (401, "Unauthorized"),
+        (403, "Forbidden"),
+        (502, "Bad Gateway"),
+    ])
+    func refusedUpgradeIsNamed(status: Int, reason: String) async throws {
+        let server = try LoopbackHTTPServer(status: status, reason: reason, body: "<html>\(reason)</html>")
+        defer { server.stop() }
+        let failure = try await dial(server, headers: [:])
+        #expect(failure == "the server refused the connection (HTTP \(status))")
+    }
+
+    @Test("a failure without a refusal keeps URLSession's own text")
+    func otherFailuresKeepTheirText() throws {
+        let url = try #require(URL(string: "ws://127.0.0.1/ws"))
+        let error = URLError(.networkConnectionLost)
+        #expect(URLSessionWebSocketTransport.failureText(error, response: nil) == error.localizedDescription)
+        let switched = HTTPURLResponse(url: url, statusCode: 101, httpVersion: "HTTP/1.1", headerFields: nil)
+        #expect(URLSessionWebSocketTransport.failureText(error, response: switched) == error.localizedDescription)
+        let plain = URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
+        #expect(URLSessionWebSocketTransport.failureText(error, response: plain) == error.localizedDescription)
+    }
+
     @Test("the upgrade request keeps its own Cookie header, and the session keeps no cookies")
     func noCookieHandling() throws {
         let url = try #require(URL(string: "wss://mini.getbb.app/ws"))
