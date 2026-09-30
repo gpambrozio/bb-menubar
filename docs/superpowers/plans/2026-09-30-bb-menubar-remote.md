@@ -22,7 +22,7 @@ Everything in `AGENTS.md` still holds (never crash the tray, no silent caps, eve
 2. A local bb starting or stopping on a paired Mac: exactly one session, no rows from the other server.
 3. The health probe: runs at most once per failure, never while connected, and its answer can never outlive the target it was about (stale probe after a server change).
 4. A pasted JSON payload with a foreign `apex`, or a redeem answer with a foreign `serverUrl`, is refused before any credential is stored or sent.
-5. Forget deletes the Keychain item even when revoke fails, and the menu returns to "not running / Connect to a remote bb…".
+5. Forget deletes the Keychain item, and the menu returns to "not running / Connect to a remote bb…". (Amended after the live test: Forget no longer revokes — getbb.app refuses a device's own revoke — and points to getbb.app/dashboard instead.)
 
 ---
 
@@ -87,4 +87,13 @@ Everything in `AGENTS.md` still holds (never crash the tray, no silent caps, eve
 
 ### Task 7: Human verification (the user, not an agent)
 
-On a client Mac with the signed build: pair with a fresh code; rows and `example-mini · connected` appear; a click opens the thread; closing bb on the mini (or sleeping it) shows the offline row; Forget returns to "not running" and the device leaves the dashboard (or the follow-up alert says to remove it there). Report the relay's actual wording for revoked/offline so the tables can be checked.
+On a client Mac with the signed build (amended after the first live test, 2026-09-30):
+
+- [ ] Pair with a fresh code; the pairing window opens in front of other apps' windows and takes typing.
+- [ ] Rows and `example-mini · connected` appear, and stay: the `/ws` socket opens with the minted desktop session (no `bb live updates: the server refused the connection (HTTP 401)` row), and a change in bb on the mini shows within about a second.
+- [ ] A click opens the thread.
+- [ ] Closing bb on the mini (or sleeping it) shows the offline row. Report the relay's actual answers here: the offline case is the one not yet seen live.
+- [ ] Forget: the confirmation says the device stays listed at getbb.app/dashboard; **Forget and Open getbb.app/dashboard** returns the menu to "not running / Connect to a remote bb…" and opens the dashboard, where the device is still listed and can be removed by hand. Every alert opens in front.
+- [ ] Removing the device at the dashboard while still paired shows the revoked row (`bb Connect no longer accepts bb Icon's pairing with example-mini. Pair again, or forget it.`), and bb Icon keeps retrying.
+
+Established live on 2026-09-30, no longer to check: the machine header works on HTTP and is refused on `/ws`; the desktop-session cookie opens `/ws`; a device cannot revoke itself; the relay's answers for a revoked pairing (see the design's "Naming what goes wrong").

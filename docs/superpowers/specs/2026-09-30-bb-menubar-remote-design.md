@@ -1,6 +1,9 @@
 # bb Icon — watching a remote bb over bb Connect
 
-Date: 2026-09-30. Status: **approved by the user, 2026-09-30.**
+Date: 2026-09-30. Status: **approved by the user, 2026-09-30.** Amended the same day after
+the first live test against the relay: `/ws` takes a desktop session cookie, not the machine
+header; a device cannot revoke itself; the relay's answers for a revoked pairing are now
+known.
 
 This amends `2026-09-29-bb-menubar-design.md` and lifts one item from its Deferred list:
 "a bb.app connected to a **remote** bb server (bb Connect)". Where this document is silent,
@@ -20,16 +23,28 @@ when bb.app starts its own local server (`claimBbAppRuntimeFile`, bb 0.44.0
   warns that its public API is unauthenticated (`src/start-server.ts:327-332`). Remote
   access is gated entirely by the **getbb.app relay** in front of it.
 - **The relay accepts a per-device machine credential**, sent raw in the header
-  `x-bb-connect-machine: <credential>` on HTTP requests and on the WebSocket upgrade. This
-  is how bb's own host daemon and CLI proxy reach `/api/v1` and `/ws` from a client Mac
-  (host-daemon `src/server-client.ts:418-424`, `src/machine-auth-proxy.ts:109-211`).
-  Without it every path, `/health` included, answers HTTP 401 with an HTML page.
+  `x-bb-connect-machine: <credential>` on HTTP requests. This is how bb's own host daemon
+  and CLI proxy reach `/api/v1` from a client Mac (host-daemon
+  `src/server-client.ts:418-424`, `src/machine-auth-proxy.ts:109-211`). Without it every
+  path, `/health` included, answers HTTP 401 with an HTML page.
+- **The relay refuses that header on a WebSocket upgrade** (HTTP 401, HTML body, with or
+  without `Origin`; seen live 2026-09-30). What it accepts there is a **desktop session**:
+  `POST {serverUrl}/api/connect/desktop-session` with the header, `content-type:
+  application/json`, and `{}` answers `{"cookie": {"name":
+  "__Secure-bb-connect.desktop_session", "value": "…", "domain": ".getbb.app",
+  "expiresAt": <epoch ms, about 7 days out>}}`, and an upgrade carrying
+  `Cookie: <name>=<value>` opens (101).
+- **A device cannot revoke itself.** `POST https://getbb.app/api/connect/revoke-machine`
+  with the device's own header and `{machineId}` answers 401 `{"error":"unauthorized"}`;
+  only the server's own credential, through its connect plugin, may revoke. bb Icon does
+  not have that credential.
 - **A device gets its own credential from a one-time machine code** — the flow bb's
   mobile app uses. The code is minted on the server (`bb connect machine-code`, or
   Settings → Remote access → Add mobile device in any bb window), lasts 10 minutes, and
   works once. Redeeming it at `POST https://getbb.app/api/connect/redeem-machine` with
-  `{"code": "…"}` returns `{credential, machineId, serverUrl}`. The device then appears in
-  the getbb.app dashboard's machine list, where it can be revoked.
+  `{"code": "…"}` returns `{credential, machineId, serverUrl}` (and a `handle`, which bb
+  Icon ignores: it takes the handle from `serverUrl`). The device then appears in the
+  getbb.app dashboard's machine list, where it can be removed.
 - **The open endpoint reaches every client of the server**, on every Mac and phone. There
   is no per-client target and no URL scheme.
 
@@ -102,8 +117,11 @@ a small window:
   there but does not decode as a valid pairing (including one naming a server outside
   getbb.app) reads as unreadable, and the tray carries on as if unpaired, offering
   **Connect to a remote bb…**, whose save replaces it.
-- A code is spent once getbb.app answers, so a pairing that cannot be stored is revoked
-  at once rather than kept only in memory, and the window says the code has been used.
+- A code is spent once getbb.app answers, so a pairing that cannot be stored is not used
+  rather than kept only in memory, and the window says the code has been used and that the
+  device it made is listed at getbb.app/dashboard, to be removed there.
+- A new pairing that replaces an earlier one (possible only when the stored one was read
+  late or not at all) says the earlier device is still listed at getbb.app/dashboard.
 - Pairing while this Mac's own bb is running changes nothing in the tray but the footer
   row, so the window does not just close: it says **Paired with `<handle>`. bb Icon will
   watch it whenever this Mac's own bb is not running.** and the user closes it.
@@ -114,17 +132,52 @@ One pairing per Mac. Several remote servers remain deferred.
 
 The same `BBAPI` and `RealtimeSession` serve both cases. A server target is a base URL plus
 extra headers: none for the local server, `x-bb-connect-machine` for a remote one, on every
-HTTP request and on the `/ws` upgrade. bb Icon sends no `Origin` header; the server's guard
-passes a request without one (`browser-request-guard.ts:146-152`). No request, and not
-the `/ws` upgrade, follows a redirect: `URLSession` would carry the header to whatever
-host `Location` names, so a 3xx is answered as a refusal.
+HTTP request and on the `/ws` upgrade (where the relay ignores it, harmlessly).
+
+A remote `/ws` upgrade also needs the relay's **desktop session**. Before **every** remote
+dial — the first and each reconnect — bb Icon mints one (`POST
+{serverUrl}/api/connect/desktop-session`, above) and sends
+`Cookie: __Secure-bb-connect.desktop_session=<value>` on that one upgrade. A session is not
+kept between dials: the dial already waits out the backoff, and revoking the pairing kills
+existing sessions anyway. The answer is checked strictly before anything is sent: the name
+must be exactly `__Secure-bb-connect.desktop_session`, the domain `.getbb.app`, and the value
+1 to 4096 RFC 6265 cookie octets (visible ASCII without `"`, `,`, `;`, `\`, or whitespace).
+No `URLSession` bb Icon uses has a cookie store: the upgrade request sets
+`httpShouldHandleCookies = false`, so the `Cookie` header is sent as set, and no cookie a
+server answers with is kept. The local bb needs no session and is dialled at once.
+
+The session cookie is a credential like the one it was minted with: it is sent only on
+that upgrade, never logged or shown, and any failure text of that dial is scrubbed of it.
+
+bb Icon sends no `Origin` header; the server's guard passes a request without one
+(`browser-request-guard.ts:146-152`), and `URLSessionWebSocketTask` adds none (seen
+live). No request, and not the `/ws` upgrade, follows a redirect: `URLSession` would carry
+the header to whatever host `Location` names, so a 3xx is answered as a refusal.
 
 bb.app need not run on this Mac for bb Icon to watch a remote bb; only a row click needs it.
 
 ### Naming what goes wrong
 
 A remote connection can fail in ways a loopback one cannot, and the rows are dropped in
-each case, as today. When a fetch or the socket fails, bb Icon asks
+each case, as today.
+
+The relay's answers once a pairing has been revoked at the dashboard, as seen live
+(2026-09-30): `/api/connect/servers` → 401 `{"error":"unauthorized"}`; `/api/v1/*` → 403
+`text/plain` `bb connect: machine not authorized`; `desktop-session` → 401; and `/ws` with
+a session minted before the revoke → 401. Revoking kills existing sessions too.
+
+A desktop session that cannot be minted is a dial that failed before it opened, retried
+with the same backoff:
+
+| Answer to `desktop-session` | Error row |
+| --- | --- |
+| 401/403 | the revoked row below, word for word |
+| no answer, another status, or a cookie that fails the checks | bb live updates: could not start a session with getbb.app: … (the failure, `HTTP <n>` for a 5xx, `getbb.app answered HTTP <n>`, or the field that failed — never the value) |
+
+An upgrade the relay (or a local bb) answers with anything but 101 is named by its status:
+`bb live updates: the server refused the connection (HTTP <n>)`.
+
+When a fetch or the socket fails, bb Icon asks
 `GET {serverUrl}/api/connect/servers` (same header) what is wrong, and names it:
 
 | Finding | Error row |
@@ -158,21 +211,20 @@ The layout is unchanged except for the status line and one footer row:
 | remote bb | `<handle> · connected` / `connecting` / `reconnecting` | **Forget `<handle>`…** |
 | neither | `bb is not running` | **Connect to a remote bb…** |
 
-**Forget `<handle>`…** asks for confirmation, then stops using the pairing at once (the
-menu is back to **Connect to a remote bb…** and the socket closed), deletes the Keychain
-item, and then makes a best-effort
-`POST https://getbb.app/api/connect/revoke-machine` with `{"machineId": …}` and its own
-header, from the copy still in memory; the item is deleted whatever the revoke answers. If
-the revoke is refused or unreachable, or the delete fails, a follow-up alert says so, and
-for the revoke points to getbb.app/dashboard to remove the device by hand. (Whether the
-relay lets a device revoke itself is not visible in bb's code; the design does not depend
-on it.) A Forget that lands while a new pairing is being saved leaves that newer item
-alone.
+**Forget `<handle>`…** asks for confirmation, saying up front that bb Icon will stop
+watching `<handle>` and delete its pairing from this Mac, and that getbb.app keeps listing
+bb Icon as a device, holding a machine slot, until it is removed at getbb.app/dashboard.
+Its buttons are **Forget and Open getbb.app/dashboard**, **Forget**, and **Cancel**. Forget
+stops using the pairing at once (the menu is back to **Connect to a remote bb…** and the
+socket closed) and deletes the Keychain item. It sends nothing to getbb.app: a device
+cannot revoke itself (see above). If the delete fails, a follow-up alert names it, repeats
+where the device is still listed, and offers **Open getbb.app/dashboard**. A Forget that
+lands while a new pairing is being saved leaves that newer item alone.
 
 Quitting while a pair or Forget is under way waits for it to finish — bounded by the HTTP
-timeouts and the Keychain — so a spent code is not lost unstored and a deleted pairing is
-not left unrevoked, and then for any failure or notice it produced to be shown in an alert
-and dismissed, since the app will not stay open for the window to show it. A pair whose
+timeouts and the Keychain — so a spent code is not lost unstored and a forgotten pairing is
+not left in the Keychain, and then for any failure or notice it produced to be shown in an
+alert and dismissed, since the app will not stay open for the window to show it. A pair whose
 save fails after a Forget ran during it deletes the Keychain item itself, which that Forget
 had left alone.
 
@@ -192,13 +244,14 @@ bb.app not installed on this Mac is named as today.
 | `BBIconCore/Connect/ConnectCredential.swift` | The pairing value and the `PairingStore` protocol. |
 | `BBIconCore/Connect/KeychainPairingStore.swift` | The Keychain implementation. `Security` only, no AppKit, so it is core. |
 | `BBIconCore/Connect/ConnectHealth.swift` | The `/api/connect/servers` probe and its classification. |
-| `BBIconCore/Connect/ConnectRevoke.swift` | The best-effort revoke. |
-| `BBIconCore/Connect/PairingController.swift` | Load at launch, pair, Forget: their order, the `.pairing` row, the races between them, revoking any pairing that is dropped. Keychain calls off the main thread through an injected executor. |
+| `BBIconCore/Connect/ConnectSession.swift` | Mint the relay's desktop session for one `/ws` dial, check the cookie, name each failure. |
+| `BBIconCore/Connect/PairingController.swift` | Load at launch, pair, Forget: their order, the `.pairing` row, the races between them, and the dashboard pointer for any pairing that is dropped. Keychain calls off the main thread through an injected executor. |
 | `BBIconCore/Store/ServerConnection.swift` | Chooses local, then remote; a target is URL plus headers. |
-| `BBIconCore/Server/BBAPI.swift`, `RealtimeSession.swift` | Take the target's headers. |
+| `BBIconCore/Server/BBAPI.swift`, `RealtimeSession.swift` | Take the target's headers; `RealtimeSession` also asks for per-dial headers (the session cookie) before each dial. |
 | `BBIconCore/Tray/MenuModel.swift` | The status line and the two footer rows. |
 | `BBIcon/PairingWindow.swift` | The code field and its messages. Decides nothing. |
 | `BBIcon/AppCoordinator.swift` | Wiring, the pairing window, the Forget confirmation and its follow-up alert. |
+| `BBIcon/Foreground.swift` | Putting the pairing window and every alert in front of other apps'. |
 
 ## Testing
 
@@ -207,11 +260,14 @@ bb.app not installed on this Mac is named as today.
   since recording them means minting a real code.
 - An opt-in live test, `BB_ICON_LIVE_REMOTE=1`, reads the stored pairing and fetches a
   snapshot through the relay. It never opens a thread.
+- A loopback server checks what the real `URLSessionWebSocketTransport` puts on the wire
+  (the `Cookie` and machine headers as set, no `Origin`) and how it names a refused upgrade.
+- An opt-in live test, same switch, mints a desktop session and opens `/ws` through the
+  relay.
 - **Needs the user, because it spends a machine slot or needs another Mac:** pairing with a
-  real code on a client Mac; the relay's actual answers for a revoked pairing and an
-  offline server (the design names each case but cannot see the relay's wording);
-  whether `URLSessionWebSocketTask` adds an `Origin` header; whether self-revoke is
-  accepted; the click-through from a client Mac.
+  real code on a client Mac; the tray connecting live over `/ws` with the minted session;
+  the relay's actual answer for an offline server (the design names it but has not seen
+  it); the click-through from a client Mac.
 
 ## Deferred
 
