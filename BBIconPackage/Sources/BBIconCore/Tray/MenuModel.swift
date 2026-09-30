@@ -23,9 +23,14 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
     /// means SwiftUI draws one of them.
     case error(index: Int, detail: String)
     /// The one connection line: connected, connecting, reconnecting, or not
-    /// running.
+    /// running, naming the remote bb when that is the one watched.
     case status(label: String)
     case openApp
+    /// Pairs with a remote bb. Offered while there is no pairing.
+    case connectRemote(label: String)
+    /// Forgets the pairing with the remote bb `handle`. Offered while there
+    /// is one, whether or not a local bb has taken precedence over it.
+    case forgetRemote(handle: String, label: String)
     case loginItem(enabled: Bool)
     case quit
 
@@ -39,6 +44,8 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
         case .error(let index, _): "error:\(index)"
         case .status: "status"
         case .openApp: "openApp"
+        case .connectRemote: "connectRemote"
+        case .forgetRemote: "forgetRemote"
         case .loginItem: "loginItem"
         case .quit: "quit"
         }
@@ -52,6 +59,31 @@ public enum MenuModel {
         .reconnecting: "bb · reconnecting",
         .notRunning: "bb is not running",
     ]
+
+    /// The status line's second half for a remote bb, after its handle. Not
+    /// running has no entry: a remote bb is only named while it is the server
+    /// in use, and then the session is always connecting, connected, or
+    /// reconnecting.
+    static let remoteStatusText: [ConnectionStatus: String] = [
+        .connected: "connected",
+        .connecting: "connecting",
+        .reconnecting: "reconnecting",
+    ]
+
+    public static let connectRemoteLabel = "Connect to a remote bb…"
+
+    public static func forgetRemoteLabel(handle: String) -> String {
+        "Forget \(handle)…"
+    }
+
+    /// `bb · connected` for this Mac's bb, `<handle> · connected` for a
+    /// remote one.
+    public static func statusLabel(_ model: TrayViewModel) -> String {
+        if let serverName = model.serverName, let state = remoteStatusText[model.status] {
+            return serverName + " · " + state
+        }
+        return statusText[model.status] ?? model.status.rawValue
+    }
 
     /// What separates the parts of a thread row.
     static let partSeparator = "  ·  "
@@ -112,9 +144,14 @@ public enum MenuModel {
             separator()
         }
 
-        items.append(.status(label: statusText[model.status] ?? model.status.rawValue))
+        items.append(.status(label: statusLabel(model)))
         separator()
         items.append(.openApp)
+        if let handle = model.paired {
+            items.append(.forgetRemote(handle: handle, label: forgetRemoteLabel(handle: handle)))
+        } else {
+            items.append(.connectRemote(label: connectRemoteLabel))
+        }
         items.append(.loginItem(enabled: loginItemEnabled))
         separator()
         items.append(.quit)

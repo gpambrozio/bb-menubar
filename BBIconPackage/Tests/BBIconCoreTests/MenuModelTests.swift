@@ -10,7 +10,9 @@ struct MenuModelTests {
         sections: [TrayMenuSection] = [],
         status: ConnectionStatus = .connected,
         truncated: Bool = false,
-        errors: [String] = []
+        errors: [String] = [],
+        serverName: String? = nil,
+        paired: String? = nil
     ) -> TrayViewModel {
         TrayViewModel(
             icon: sections.first?.bucket ?? .done,
@@ -18,7 +20,9 @@ struct MenuModelTests {
             sections: sections,
             status: status,
             truncated: truncated,
-            errors: errors
+            errors: errors,
+            serverName: serverName,
+            paired: paired
         )
     }
 
@@ -45,6 +49,7 @@ struct MenuModelTests {
             .status(label: "bb · connected"),
             .separator(index: 1),
             .openApp,
+            .connectRemote(label: "Connect to a remote bb…"),
             .loginItem(enabled: true),
             .separator(index: 2),
             .quit,
@@ -60,6 +65,7 @@ struct MenuModelTests {
             .status(label: "bb · connected"),
             .separator(index: 1),
             .openApp,
+            .connectRemote(label: "Connect to a remote bb…"),
             .loginItem(enabled: false),
             .separator(index: 2),
             .quit,
@@ -73,6 +79,7 @@ struct MenuModelTests {
             .status(label: "bb is not running"),
             .separator(index: 0),
             .openApp,
+            .connectRemote(label: "Connect to a remote bb…"),
             .loginItem(enabled: false),
             .separator(index: 1),
             .quit,
@@ -218,5 +225,50 @@ struct MenuModelTests {
         #expect(MenuItem.thread(row: row("thr_x"), label: "x").id == "row:thr_x")
         #expect(MenuItem.error(index: 1, detail: "d").id == "error:1")
         #expect(MenuItem.status(label: "s").id == "status")
+    }
+
+    // MARK: - Remote
+
+    /// The status line and the pairing row, for every row of the design's
+    /// menu table.
+    @Test(
+        "names the server in the status line and offers to pair or forget",
+        arguments: [
+            // Local bb, not paired.
+            (ConnectionStatus.connected, nil, nil, "bb · connected", MenuItem.connectRemote(label: "Connect to a remote bb…")),
+            // Local bb, paired: the pairing is kept, and can be forgotten.
+            (.connected, nil, "mini", "bb · connected", .forgetRemote(handle: "mini", label: "Forget mini…")),
+            // Remote bb, in each state a session reports.
+            (.connected, "mini", "mini", "mini · connected", .forgetRemote(handle: "mini", label: "Forget mini…")),
+            (.connecting, "mini", "mini", "mini · connecting", .forgetRemote(handle: "mini", label: "Forget mini…")),
+            (.reconnecting, "mini", "mini", "mini · reconnecting", .forgetRemote(handle: "mini", label: "Forget mini…")),
+            // Neither.
+            (.notRunning, nil, nil, "bb is not running", .connectRemote(label: "Connect to a remote bb…")),
+        ] as [(ConnectionStatus, String?, String?, String, MenuItem)]
+    )
+    func remoteMenuTable(_ status: ConnectionStatus, _ serverName: String?, _ paired: String?, _ statusLabel: String, _ pairingRow: MenuItem) throws {
+        let items = build(model(status: status, serverName: serverName, paired: paired))
+        #expect(items.contains(.status(label: statusLabel)))
+        let pairingRows = items.filter {
+            switch $0 {
+            case .connectRemote, .forgetRemote: true
+            default: false
+            }
+        }
+        #expect(pairingRows == [pairingRow])
+        // In the footer, after Open bb and before Start at login.
+        let rowIndex = try #require(items.firstIndex(of: pairingRow))
+        #expect(rowIndex > 0 && items[rowIndex - 1] == .openApp)
+        #expect(rowIndex + 1 < items.count && items[rowIndex + 1] == .loginItem(enabled: false))
+    }
+
+    @Test("gives the pairing rows identities of their own")
+    func pairingRowIds() {
+        let paired = build(model(sections: [TrayMenuSection(bucket: .done, rows: [row()], overflow: 0)], errors: ["e"], serverName: "mini", paired: "mini"))
+        #expect(Set(paired.map(\.id)).count == paired.count)
+        let unpaired = build(model(status: .notRunning, errors: ["e"]))
+        #expect(Set(unpaired.map(\.id)).count == unpaired.count)
+        #expect(MenuItem.connectRemote(label: "x").id == "connectRemote")
+        #expect(MenuItem.forgetRemote(handle: "mini", label: "x").id == "forgetRemote")
     }
 }

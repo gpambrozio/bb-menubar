@@ -138,4 +138,24 @@ struct ThreadStoreTests {
         let store = connected(snapshot(projects: [ProjectRow(id: "p", name: "one"), ProjectRow(id: "p", name: "two")]))
         #expect(store.state.projectNames == ["p": "two"])
     }
+
+    @Test("names the server and the pairing, notifies, and keeps both across status changes")
+    func serverNameAndPairing() {
+        let store = ThreadStore()
+        var notified = 0
+        let unsubscribe = store.subscribe { notified += 1 }
+        defer { unsubscribe() }
+        store.setServerName("mini")
+        store.setPaired("mini")
+        #expect(notified == 2)
+        store.setStatus(.connecting)
+        store.setStatus(.notRunning)
+        #expect(store.state.serverName == "mini")
+        #expect(store.state.paired == "mini")
+        store.setServerName(nil)
+        store.setPaired(nil)
+        #expect(store.state == .initial)
+        #expect(BBState.initial.serverName == nil)
+        #expect(BBState.initial.paired == nil)
+    }
 }

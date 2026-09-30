@@ -37,6 +37,13 @@ public struct TrayViewModel: Equatable, Sendable {
     /// state, because the reason bb cannot be reached is most useful exactly
     /// when it cannot.
     public let errors: [String]
+    /// The remote bb's handle when that is the server in use; nil for this
+    /// Mac's own bb, or none. Carried in every state, like `status`, because
+    /// it is what the status line names.
+    public let serverName: String?
+    /// The stored pairing's handle, in use or not: it decides which of
+    /// "Connect to a remote bb…" and "Forget <handle>…" the menu offers.
+    public let paired: String?
 
     /// True when at least one thread sits in a bucket that needs the user:
     /// the same three buckets `count` is drawn from. The menu bar item draws
@@ -57,7 +64,9 @@ public struct TrayViewModel: Equatable, Sendable {
         sections: [TrayMenuSection],
         status: ConnectionStatus,
         truncated: Bool,
-        errors: [String]
+        errors: [String],
+        serverName: String? = nil,
+        paired: String? = nil
     ) {
         self.icon = icon
         self.count = count
@@ -65,6 +74,8 @@ public struct TrayViewModel: Equatable, Sendable {
         self.status = status
         self.truncated = truncated
         self.errors = errors
+        self.serverName = serverName
+        self.paired = paired
     }
 
     public static let empty = TrayViewModel(icon: .done, count: 0, sections: [], status: .notRunning, truncated: false, errors: [])
@@ -109,7 +120,16 @@ public enum TrayViewModelBuilder {
         // drops them on the way out of `connected`; this holds even for a
         // state that still carries some.
         guard state.status == .connected else {
-            return TrayViewModel(icon: .done, count: 0, sections: [], status: state.status, truncated: false, errors: state.errors)
+            return TrayViewModel(
+                icon: .done,
+                count: 0,
+                sections: [],
+                status: state.status,
+                truncated: false,
+                errors: state.errors,
+                serverName: state.serverName,
+                paired: state.paired
+            )
         }
 
         var threadsByBucket: [ThreadBucket: [ThreadRow]] = [:]
@@ -146,7 +166,9 @@ public enum TrayViewModelBuilder {
             sections: sections,
             status: state.status,
             truncated: state.truncated,
-            errors: state.errors
+            errors: state.errors,
+            serverName: state.serverName,
+            paired: state.paired
         )
     }
 

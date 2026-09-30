@@ -48,6 +48,17 @@ struct TrayViewModelTests {
         #expect(build(state([], errors: ["c"])).errors == ["c"])
     }
 
+    @Test("carries the server's name and the pairing whatever the connection state", arguments: ConnectionStatus.allCases)
+    func carriesServerNameAndPairing(_ status: ConnectionStatus) {
+        let named = BBState(status: status, threads: [done], projectNames: [:], truncated: false, errors: [], serverName: "mini", paired: "other")
+        let model = build(named)
+        #expect(model.serverName == "mini")
+        #expect(model.paired == "other")
+        let local = build(state([done], status: status))
+        #expect(local.serverName == nil)
+        #expect(local.paired == nil)
+    }
+
     @Test("shows the done mark when there are no threads at all")
     func emptyIsDone() {
         let model = build(state([]))

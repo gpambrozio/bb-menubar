@@ -52,13 +52,29 @@ public struct BBState: Equatable, Sendable {
     public let truncated: Bool
     /// One message per `ErrorSource` that has one, in `ErrorSource` order.
     public let errors: [String]
+    /// The handle of the remote bb being watched, or nil for this Mac's own
+    /// bb (and for none). Names the server in the status line.
+    public let serverName: String?
+    /// The handle of the stored pairing, whether or not it is the server in
+    /// use: a local bb wins over it, and the pairing is still there to forget.
+    public let paired: String?
 
-    public init(status: ConnectionStatus, threads: [ThreadRow], projectNames: [String: String], truncated: Bool, errors: [String]) {
+    public init(
+        status: ConnectionStatus,
+        threads: [ThreadRow],
+        projectNames: [String: String],
+        truncated: Bool,
+        errors: [String],
+        serverName: String? = nil,
+        paired: String? = nil
+    ) {
         self.status = status
         self.threads = threads
         self.projectNames = projectNames
         self.truncated = truncated
         self.errors = errors
+        self.serverName = serverName
+        self.paired = paired
     }
 
     public static let initial = BBState(status: .notRunning, threads: [], projectNames: [:], truncated: false, errors: [])
@@ -75,6 +91,8 @@ public final class ThreadStore {
     private var threads: [ThreadRow] = []
     private var projectNames: [String: String] = [:]
     private var truncated = false
+    private var serverName: String?
+    private var paired: String?
     /// Keyed by owner rather than kept as a list, so setting one source's
     /// message can never reorder or replace another's. `state.errors` is
     /// derived from it in `ErrorSource` order.
@@ -126,6 +144,21 @@ public final class ThreadStore {
         commit()
     }
 
+    /// Names the server the rows come from: a remote bb's handle, or nil for
+    /// this Mac's own. `ServerConnection` sets it after it has left
+    /// `connected` for the new server, so no state ever carries one server's
+    /// rows under another's name.
+    public func setServerName(_ name: String?) {
+        serverName = name
+        commit()
+    }
+
+    /// The stored pairing's handle, or nil when there is none.
+    public func setPaired(_ handle: String?) {
+        paired = handle
+        commit()
+    }
+
     /// Returns the function that unsubscribes.
     public func subscribe(_ listener: @escaping () -> Void) -> () -> Void {
         let id = UUID()
@@ -141,7 +174,9 @@ public final class ThreadStore {
             threads: threads,
             projectNames: projectNames,
             truncated: truncated,
-            errors: ErrorSource.allCases.compactMap { errors[$0] }
+            errors: ErrorSource.allCases.compactMap { errors[$0] },
+            serverName: serverName,
+            paired: paired
         )
         guard next != state else { return }
         state = next
