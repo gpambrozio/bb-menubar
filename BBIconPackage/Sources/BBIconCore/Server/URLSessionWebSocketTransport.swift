@@ -160,14 +160,17 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         // the socket its successor just opened — reporting a close the owner
         // never caused.
         guard !closed, task === self.task else { return }
+        let generation = self.generation
         let text = Self.failureText(error, response: task.response)
         onError?(text)
+        // `onError` may have called `connect()` (or `close()`); the close
+        // below belongs to this socket, and must not end its successor.
         let closeCode = task.closeCode
         if closeCode == .invalid {
-            finish(code: 1006, reason: text)
+            finish(code: 1006, reason: text, generation: generation)
         } else {
             let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            finish(code: closeCode.rawValue, reason: reason)
+            finish(code: closeCode.rawValue, reason: reason, generation: generation)
         }
     }
 
@@ -187,12 +190,12 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         onOpen?()
     }
 
-    private func finish(code: Int, reason: String, generation: Int? = nil) {
+    private func finish(code: Int, reason: String, generation: Int) {
         // An invalidated session's delegate is retained by that session and has
         // no notion of which socket it belongs to, so a late `didCloseWith`
-        // from the previous generation must not close the current one.
-        if let generation, generation != self.generation { return }
-        guard !closed else { return }
+        // from the previous generation must not close the current one; nor
+        // may a receive failure whose `onError` reconnected.
+        guard generation == self.generation, !closed else { return }
         closed = true
         receiveTask?.cancel()
         session?.invalidateAndCancel()
