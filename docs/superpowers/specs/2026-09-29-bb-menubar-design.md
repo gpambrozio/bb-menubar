@@ -284,8 +284,8 @@ Watching a **remote** bb server (bb Connect) was deferred here; it has moved to
 `2026-09-30-bb-menubar-remote-design.md`, which pairs bb Icon with one remote server
 through a machine code. What that design still defers is listed there.
 
-- Signing, notarization, dmg, and the Homebrew cask (copy Paseo Icon's pipeline once
-  the app works).
+- The dmg and the Homebrew cask (copy Paseo Icon's pipeline). Signing and notarization
+  are done: `npm run dist -- --identity "Developer ID Application: …"`.
 - Several bb servers at once.
 - Resolving `@project:`/`@thread:` mention tokens in titles the way bb's sidebar does.
 - Keyboard navigation in the panel (a known gap inherited from Paseo Icon).
