@@ -205,9 +205,9 @@ public struct LenientList<Element: Decodable>: Decodable {
 extension LenientList: Sendable where Element: Sendable {}
 
 /// A decoding failure as a sentence naming the field, relative to the element
-/// (the first `depth` coding keys are the array index). Anything else goes
-/// through `errorText`.
-private func failureText(_ error: any Error, below depth: Int) -> String {
+/// (the first `depth` coding keys are the array index; `BBAPI` passes 0 for a
+/// whole body). Anything else goes through `errorText`.
+func failureText(_ error: any Error, below depth: Int) -> String {
     guard let error = error as? DecodingError else { return errorText(error) }
     switch error {
     case .keyNotFound(let key, let context):
