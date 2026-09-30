@@ -1,6 +1,6 @@
 # bb Icon — watching a remote bb over bb Connect
 
-Date: 2026-09-30. Status: **draft, pending the user's review.**
+Date: 2026-09-30. Status: **approved by the user, 2026-09-30.**
 
 This amends `2026-09-29-bb-menubar-design.md` and lifts one item from its Deferred list:
 "a bb.app connected to a **remote** bb server (bb Connect)". Where this document is silent,
