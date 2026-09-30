@@ -124,8 +124,15 @@ URL's path; `http→ws`, `https→wss`). bb Icon does the same:
 - On every (re)connect, re-fetch unconditionally — invalidations sent while
   disconnected are lost.
 - Reconnect with bb's own `BbRealtimeClient` backoff: 1 s initial delay, ×1.5 per
-  attempt, capped at 30 s, reset on a successful open.
+  attempt, capped at 30 s, reset on a successful open. An open counts as successful
+  once its first fetch succeeds: a bb that accepts the socket and then fails every
+  fetch (authentication, a shape this build cannot read) is retried at a growing
+  interval, not every second.
   Backoff and debounce run on an injected clock so they are tested without sleeps.
+- A socket that fails before it opens names the reason in the error row
+  (`bb live updates: …`), so a moved or refused `/ws` is not a silent
+  `reconnecting`; the next successful fetch clears it. A socket lost after it opened
+  is a bb restart and reads only as `reconnecting`.
 
 This protocol is an **unsupported surface**: `/api/v1` and `/ws` are bb internals, not
 the Plugin SDK. The app is pinned to what bb 0.44.0 does, in the same way Paseo Icon is
@@ -266,3 +273,6 @@ Names: display name **bb Icon**, bundle `BBIcon.app`, bundle id
 - Several bb servers at once.
 - Resolving `@project:`/`@thread:` mention tokens in titles the way bb's sidebar does.
 - Keyboard navigation in the panel (a known gap inherited from Paseo Icon).
+- Post-open liveness on `/ws`: a bb that hangs while alive keeps the socket open, and
+  the tray keeps showing its last snapshot as `connected`. A periodic ping (or a
+  bounded silence timer) would detect it.

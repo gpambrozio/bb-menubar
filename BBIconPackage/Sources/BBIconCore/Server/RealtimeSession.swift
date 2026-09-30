@@ -16,7 +16,20 @@ import Foundation
 /// - A callback from a transport that is no longer `transport` is ignored, by
 ///   identity, so a socket's late close cannot tear down its successor.
 ///
-/// Every callback fires on the main actor. Timers use the injected clock.
+/// A connection counts as good once its first fetch succeeds, not when the
+/// socket opens: that is what resets the backoff and reports `connected`. A
+/// bb that accepts the socket and then refuses every fetch (authentication, a
+/// shape this build cannot read) is retried at a growing interval, not every
+/// second. A socket that fails before it opens names why through `onError`,
+/// since that is what a moved or refused `/ws` looks like; one lost after it
+/// opened is a bb restart, and only reports `reconnecting`.
+///
+/// Every callback fires on the main actor, and a callback may call `stop()`:
+/// nothing further is delivered once it has. Timers use the injected clock.
+///
+/// The owner must call `stop()` when done with a session. There is no cleanup
+/// in `deinit`: the timers and the fetch hold the session only weakly, but the
+/// transport stays open until `stop()` closes it.
 @MainActor
 public final class RealtimeSession {
     public static let initialBackoff: Duration = .seconds(1)
@@ -54,6 +67,11 @@ public final class RealtimeSession {
 
     private let websocketURL: URL
     private let makeTransport: TransportFactory
+    /// Must finish, with a value or an error, in bounded time: while it runs,
+    /// every invalidation only marks the session `dirty`, so a fetch that
+    /// never returns stalls the snapshot until the socket drops. Production
+    /// passes `BBAPI.fetchSnapshot`, bounded by `URLSessionHTTPClient`'s
+    /// 10 s request timeout.
     private let fetch: @Sendable () async throws -> BBSnapshot
     private let onStatus: (ConnectionStatus) -> Void
     private let onSnapshot: (BBSnapshot) -> Void
@@ -67,7 +85,8 @@ public final class RealtimeSession {
     private var isOpen = false
     private var backoff = initialBackoff
     private var generation = 0
-    /// Whether `connected` has been reported since the last open.
+    /// Whether a fetch has succeeded since the last open, which is when
+    /// `connected` is reported and the backoff resets.
     private var connectedSinceOpen = false
     private var lastStatus: ConnectionStatus?
     private var fetchInFlight = false
@@ -125,6 +144,8 @@ public final class RealtimeSession {
 
     private func connect() {
         reconnectTask = nil
+        // Only ever one socket: never leave one open behind a new one.
+        disposeTransport(code: 1001, reason: "Reconnecting")
         let transport = makeTransport(TransportRequest(url: websocketURL))
         self.transport = transport
         transport.onOpen = { [weak self, weak transport] in
@@ -135,15 +156,15 @@ public final class RealtimeSession {
             guard let self, self.isCurrent(transport) else { return }
             self.handleFrame(frame)
         }
-        transport.onClose = { [weak self, weak transport] _ in
+        transport.onClose = { [weak self, weak transport] close in
             guard let self, self.isCurrent(transport) else { return }
-            self.connectionLost()
+            self.transportFailed(Self.describe(close))
         }
         // A send that failed may have been a subscribe, and an open socket
         // without its subscriptions would go silent. Start over instead.
-        transport.onError = { [weak self, weak transport] _ in
+        transport.onError = { [weak self, weak transport] message in
             guard let self, self.isCurrent(transport) else { return }
-            self.connectionLost()
+            self.transportFailed(message)
         }
         transport.connect()
     }
@@ -158,12 +179,28 @@ public final class RealtimeSession {
         generation += 1
         isOpen = true
         connectedSinceOpen = false
-        backoff = Self.initialBackoff
         for message in Self.subscribeMessages {
             transport.send(.text(message))
         }
         // Whatever changed while disconnected was never announced.
         startFetch()
+    }
+
+    /// A close or an error from the current transport. Before the socket
+    /// opened, the reason is the only sign of why bb cannot be reached, so it
+    /// is named; after, it is a restart, and `reconnecting` says enough.
+    private func transportFailed(_ reason: String) {
+        let wasOpen = isOpen
+        connectionLost()
+        guard !wasOpen, running else { return }
+        onError("bb live updates: " + reason)
+    }
+
+    static func describe(_ close: TransportClose) -> String {
+        let reason = close.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return reason.isEmpty
+            ? "the connection closed before it opened (code \(close.code))"
+            : "\(reason) (code \(close.code))"
     }
 
     /// The close path, for a close, a transport error, or a failed fetch:
@@ -241,6 +278,10 @@ public final class RealtimeSession {
         }
         fetchInFlight = true
         dirty = false
+        // Every frame so far is covered by this fetch, including those of a
+        // window that has not closed yet.
+        debounceTask?.cancel()
+        debounceTask = nil
         let generation = self.generation
         let fetch = self.fetch
         fetchTask = Task { @MainActor [weak self] in
@@ -254,23 +295,34 @@ public final class RealtimeSession {
         }
     }
 
+    /// Every callback can re-enter through `stop()`, so the result is checked
+    /// against the session again after each one.
     private func finishFetch(_ result: Result<BBSnapshot, any Error>, generation: Int) {
-        guard running, generation == self.generation else { return }
+        func current() -> Bool { running && generation == self.generation }
+        guard current() else { return }
         fetchInFlight = false
         fetchTask = nil
         switch result {
         case .success(let snapshot):
-            onError(nil)
-            onSnapshot(snapshot)
-            if !connectedSinceOpen {
+            let firstSinceOpen = !connectedSinceOpen
+            if firstSinceOpen {
                 connectedSinceOpen = true
+                backoff = Self.initialBackoff
+            }
+            onError(nil)
+            guard current() else { return }
+            onSnapshot(snapshot)
+            guard current() else { return }
+            if firstSinceOpen {
                 emitStatus(.connected)
+                guard current() else { return }
             }
             // The invalidations it absorbed already waited out their window,
             // so the follow-up starts now rather than after another one.
             if dirty { startFetch() }
         case .failure(let error):
             onError(errorText(error))
+            guard current() else { return }
             connectionLost()
         }
     }

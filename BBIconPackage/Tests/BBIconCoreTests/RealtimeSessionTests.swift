@@ -61,7 +61,11 @@ struct RealtimeSessionTests {
     /// Every callback, in the order the session made them.
     @MainActor
     final class Log {
-        var events: [Event] = []
+        var events: [Event] = [] {
+            didSet { if let event = events.last, events.count > oldValue.count { onEvent?(event) } }
+        }
+        /// Runs inside the session's callback, for re-entrancy tests.
+        var onEvent: ((Event) -> Void)?
         var statuses: [ConnectionStatus] { events.compactMap { if case .status(let s) = $0 { s } else { nil } } }
         var snapshots: [BBSnapshot] { events.compactMap { if case .snapshot(let s) = $0 { s } else { nil } } }
         var errors: [String?] { events.compactMap { if case .error(let e) = $0 { .some(e) } else { nil } } }
@@ -215,13 +219,21 @@ struct RealtimeSessionTests {
         // that restarted on every frame would never fetch while it did.
         transport.simulateText(Self.threadChanged)
         await settle()
-        for _ in 0..<10 {
+        // Windows open at 0, 300, 600, and 900 ms and close 250 ms later, so
+        // the advances to 300, 600, and 900 ms each close one.
+        var expected = 1
+        for step in 1...10 {
             await h.clock.advance(by: .milliseconds(100))
-            await settle()
+            if step.isMultiple(of: 3) {
+                expected += 1
+                await settle(until: { h.fetcher.calls == expected })
+            } else {
+                await settle()
+            }
+            #expect(h.fetcher.calls == expected, "at \(step * 100) ms")
             transport.simulateText(Self.threadChanged)
             await settle()
         }
-        // Windows open at 0, 300, 600, and 900 ms; the first three have closed.
         #expect(h.fetcher.calls == 4)
     }
 
@@ -296,11 +308,15 @@ struct RealtimeSessionTests {
         let transport = try h.transport(0)
         transport.simulateOpen()
         await settle(until: { h.fetcher.pendingCalls == [1] })
-        for _ in 0..<3 { transport.simulateText(Self.threadChanged) }
-        await settle()
-        await h.clock.advance(by: .milliseconds(250))
-        await settle()
-        #expect(h.fetcher.calls == 1, "never two fetches at once")
+        // Three separate windows close while fetch 1 is still running; each
+        // one finds a fetch in flight.
+        for window in 1...3 {
+            transport.simulateText(Self.threadChanged)
+            await settle()
+            await h.clock.advance(by: .milliseconds(250))
+            await settle()
+            #expect(h.fetcher.calls == 1, "never two fetches at once (window \(window))")
+        }
         h.fetcher.release(1)
         await settle(until: { h.fetcher.pendingCalls == [2] })
         #expect(h.fetcher.calls == 2)
@@ -313,7 +329,90 @@ struct RealtimeSessionTests {
         h.fetcher.releaseAll()
     }
 
+    @Test("a fetch that starts covers the frames of a window still open")
+    func followUpFetchCoversPendingWindow() async throws {
+        let h = try Harness()
+        h.fetcher.suspends = true
+        h.session.start()
+        let transport = try h.transport(0)
+        transport.simulateOpen()
+        await settle(until: { h.fetcher.pendingCalls == [1] })
+        // A window closes during fetch 1, so a follow-up is owed.
+        transport.simulateText(Self.threadChanged)
+        await settle()
+        await h.clock.advance(by: .milliseconds(250))
+        await settle()
+        // A second window opens; the follow-up starts before it closes and
+        // already sees this frame's change.
+        transport.simulateText(Self.threadChanged)
+        await settle()
+        h.fetcher.release(1)
+        await settle(until: { h.fetcher.pendingCalls == [2] })
+        h.fetcher.release(2)
+        await settle(until: { h.log.snapshots.count == 2 })
+        await h.clock.advance(by: .seconds(5))
+        await settle()
+        #expect(h.fetcher.calls == 2)
+        h.fetcher.releaseAll()
+    }
+
     // MARK: - Reconnecting
+
+    @Test("the backoff keeps growing while every fetch after open fails")
+    func backoffGrowsWhileFetchesFail() async throws {
+        let h = try Harness()
+        h.fetcher.failure = BBAPIError.authenticationRequired
+        h.session.start()
+        // Each transport opens and its fetch fails. An open alone is not a
+        // success, so the delays still grow: 1 s, 1.5 s, 2.25 s.
+        let delays: [Duration] = [.seconds(1), .milliseconds(1500), .milliseconds(2250)]
+        for (index, delay) in delays.enumerated() {
+            try h.transport(index).simulateOpen()
+            await settle(until: { h.log.errors.count == index + 1 })
+            #expect(try h.transport(index).closedWith != nil)
+            await settle()
+            await h.clock.advance(by: delay - .milliseconds(1))
+            await settle()
+            #expect(h.factory.transports.count == index + 1, "not before \(delay)")
+            await h.clock.advance(by: .milliseconds(1))
+            await settle(until: { h.factory.transports.count == index + 2 })
+            #expect(h.factory.transports.count == index + 2, "after \(delay)")
+        }
+        #expect(h.log.statuses == [.connecting, .reconnecting])
+    }
+
+    @Test("a transport that fails before it opens names the failure")
+    func handshakeFailureNamesItself() async throws {
+        let h = try Harness()
+        h.session.start()
+        let first = try h.transport(0)
+        first.simulateError("There was a bad response from the server.")
+        #expect(h.log.errors == ["bb live updates: There was a bad response from the server."])
+        #expect(h.log.statuses == [.connecting, .reconnecting])
+        #expect(first.closedWith != nil)
+        first.simulateClose()
+        #expect(h.log.errors.count == 1, "the dropped transport's close adds nothing")
+
+        await settle()
+        await h.clock.advance(by: .seconds(1))
+        await settle(until: { h.factory.transports.count == 2 })
+        try h.transport(1).simulateClose(code: 1002, reason: "")
+        #expect(h.log.errors.last == "bb live updates: the connection closed before it opened (code 1002)")
+
+        await settle()
+        await h.clock.advance(by: .milliseconds(1500))
+        await settle(until: { h.factory.transports.count == 3 })
+        let third = try h.transport(2)
+        third.simulateOpen()
+        await settle(until: { h.log.statuses.last == .connected })
+        #expect(h.log.errors.last == .some(nil), "the first good fetch clears it")
+
+        // After an open, losing the socket is a bb restart: just reconnecting.
+        let errors = h.log.errors
+        third.simulateClose(code: 1001, reason: "server shutting down")
+        #expect(h.log.statuses.last == .reconnecting)
+        #expect(h.log.errors == errors)
+    }
 
     @Test("a close reconnects after the backoff, which grows until an open resets it")
     func closeReconnectsWithBackoff() async throws {
@@ -357,6 +456,7 @@ struct RealtimeSessionTests {
         let first = try await h.startConnected()
         first.simulateError("The network connection was lost.")
         #expect(h.log.statuses.last == .reconnecting)
+        #expect(h.log.errors == [nil], "a socket lost after open is not an error row")
         #expect(first.closedWith != nil)
         // The close that follows the error belongs to a transport already
         // dropped; it must not advance the backoff a second time.
@@ -512,6 +612,43 @@ struct RealtimeSessionTests {
         await h.clock.advance(by: .seconds(60))
         await settle()
         #expect(h.factory.transports.count == 1)
+    }
+
+    @Test("a stop from inside a callback silences the rest of that fetch")
+    func stopFromCallbackIsSilent() async throws {
+        let h = try Harness()
+        h.log.onEvent = { [weak session = h.session] event in
+            if case .snapshot = event { session?.stop() }
+        }
+        h.session.start()
+        let transport = try h.transport(0)
+        transport.simulateOpen()
+        await settle(until: { !h.log.snapshots.isEmpty })
+        await settle()
+        #expect(h.log.events == [.status(.connecting), .error(nil), .snapshot(FakeFetcher.snapshot(1))])
+        #expect(transport.closedWith?.code == 1000)
+        await h.clock.advance(by: .seconds(60))
+        await settle()
+        #expect(h.factory.transports.count == 1)
+        h.log.onEvent = nil
+    }
+
+    @Test("a stop from inside the error callback prevents the reconnect")
+    func stopFromErrorCallbackIsSilent() async throws {
+        let h = try Harness()
+        h.fetcher.failure = BBAPIError.authenticationRequired
+        h.log.onEvent = { [weak session = h.session] event in
+            if case .error = event { session?.stop() }
+        }
+        h.session.start()
+        try h.transport(0).simulateOpen()
+        await settle(until: { !h.log.errors.isEmpty })
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        await settle()
+        #expect(h.log.statuses == [.connecting])
+        #expect(h.factory.transports.count == 1)
+        h.log.onEvent = nil
     }
 
     @Test("start after stop connects afresh")
