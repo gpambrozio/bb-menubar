@@ -174,10 +174,12 @@ public final class RuntimeSession {
             lastDelivered = resolution
             onChange(resolution)
         }
-        // Either callback may have stopped the session.
-        guard running else { return }
+        // Either callback may have stopped the session, or stopped and
+        // started it, whose own first read is already under way: this read
+        // is then the old lifecycle's, and nothing more of it runs.
+        guard running, generation == self.generation else { return }
         afterRead?()
-        guard running else { return }
+        guard running, generation == self.generation else { return }
         // The request it absorbed already waited out its debounce, so the
         // follow-up starts now rather than after another one.
         if rereadPending { startRead() }

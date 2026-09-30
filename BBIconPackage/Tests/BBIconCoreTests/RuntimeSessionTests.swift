@@ -95,6 +95,8 @@ struct RuntimeSessionTests {
         private(set) var pidsChecked: [Int32] = []
         /// Every resolution delivered, in order.
         private(set) var deliveries: [RuntimeResolution] = []
+        /// Runs inside the session's `onChange`, for re-entrancy tests.
+        var onDelivery: ((RuntimeResolution) -> Void)?
         /// Reads the session applied: the deterministic signal that one finished.
         private(set) var afterReads = 0
         private(set) var session: RuntimeSession?
@@ -110,7 +112,10 @@ struct RuntimeSessionTests {
                 isAppRunning: { [weak self] in self?.appRunning ?? false },
                 watch: { [weak self] onChange in self?.watcher.watch(onChange) ?? {} },
                 afterRead: { [weak self] in self?.afterReads += 1 },
-                onChange: { [weak self] resolution in self?.deliveries.append(resolution) },
+                onChange: { [weak self] resolution in
+                    self?.deliveries.append(resolution)
+                    self?.onDelivery?(resolution)
+                },
                 clock: clock
             )
         }
@@ -428,6 +433,29 @@ struct RuntimeSessionTests {
         #expect(h.deliveries.isEmpty)
         #expect(h.afterReads == 0)
         #expect(h.file.reads == 1)
+    }
+
+    @Test("a restart from inside onChange runs nothing more of the old read")
+    func restartFromOnChange() async throws {
+        let h = Harness()
+        h.file.contents = Self.runtimeJSON()
+        var restarted = false
+        h.onDelivery = { [weak h] _ in
+            guard !restarted, let session = h?.session else { return }
+            restarted = true
+            session.stop()
+            session.start()
+        }
+        try h.start()
+        await eventually { h.deliveries.count == 2 }
+        await h.quiesce()
+        h.onDelivery = nil
+        // Only the new lifecycle's read reaches `afterRead`; the old one's
+        // stopped at `onChange`.
+        #expect(h.afterReads == 1)
+        #expect(h.file.reads == 2)
+        #expect(h.deliveries == [.running(try Self.info()), .running(try Self.info())])
+        try h.stop()
     }
 
     @Test("starting again delivers the resolution again, even if unchanged")

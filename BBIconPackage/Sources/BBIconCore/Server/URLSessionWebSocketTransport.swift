@@ -112,12 +112,16 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         case .binary(let bytes): message = .data(Data(bytes))
         }
         let previous = sendTail
+        let generation = self.generation
         sendTail = Task { [weak self] in
             await previous.value
             do {
                 try await task.send(message)
             } catch {
-                self?.onError?(error.localizedDescription)
+                // A send cut short by `close()` or a later `connect()` fails
+                // too; that is not news about the socket now in place.
+                guard let self, !self.closed, generation == self.generation else { return }
+                self.onError?(error.localizedDescription)
             }
         }
     }

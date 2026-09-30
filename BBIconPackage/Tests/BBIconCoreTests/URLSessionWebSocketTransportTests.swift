@@ -78,6 +78,26 @@ struct URLSessionWebSocketTransportTests {
         #expect(server.requestHeads.count == 2)
     }
 
+    @Test("a send cut short by a reconnect is not reported against the new socket")
+    func sendCutShortByReconnectIsSilent() async throws {
+        let server = try LoopbackHTTPServer(status: 401, reason: "Unauthorized")
+        defer { server.stop() }
+        let port = try await server.start()
+        let url = try #require(URL(string: "ws://127.0.0.1:\(port)/ws"))
+        let transport = URLSessionWebSocketTransport(request: TransportRequest(url: url, headers: [:]))
+        defer { transport.close(code: 1000, reason: "test") }
+        var events: [Event] = []
+        transport.onError = { events.append(.error($0)) }
+        transport.onClose = { events.append(.close($0.code)) }
+        transport.connect()
+        transport.send(.text("frame for the first socket"))
+        transport.connect()
+        await eventually { events.contains(.close(1006)) }
+        await eventually(timeout: .milliseconds(500)) { events.count > 2 }
+        let refused = "the server refused the connection (HTTP 401)"
+        #expect(events == [.error(refused), .close(1006)])
+    }
+
     @Test("a failure without a refusal keeps URLSession's own text")
     func otherFailuresKeepTheirText() throws {
         let url = try #require(URL(string: "ws://127.0.0.1/ws"))
