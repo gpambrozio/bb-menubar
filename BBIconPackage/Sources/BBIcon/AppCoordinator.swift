@@ -224,10 +224,16 @@ final class AppCoordinator {
         }
     }
 
-    private func refreshLoginItem() {
+    /// Re-reads the login item's state. The switch also lives in System
+    /// Settings, outside this app, so the checkmark is re-read whenever the
+    /// panel appears (`MenuContent`'s `onAppear`), besides on every rebuild:
+    /// a rebuild only follows a change in bb, and a checkmark that waited for
+    /// one would show the state from before the user flipped it there.
+    func refreshLoginItem() {
         let enabled = SMAppService.mainApp.status == .enabled
-        // Guarded, because this runs on every rebuild and an unconditional
-        // write invalidates every observer whether or not anything changed.
+        // Guarded, because this runs on every rebuild and every panel open,
+        // and an unconditional write invalidates every observer whether or
+        // not anything changed.
         if enabled != loginItemEnabled { loginItemEnabled = enabled }
     }
 
@@ -249,9 +255,8 @@ final class AppCoordinator {
     }
 
     private func rebuild() {
-        // Re-read on every rebuild: the switch lives in System Settings,
-        // outside this app, so a checkmark that only updates on relaunch is
-        // simply wrong.
+        // One of the two times the login item is re-read; see
+        // `refreshLoginItem`.
         refreshLoginItem()
         let next = TrayViewModelBuilder.build(store.state)
         if next != model { model = next }

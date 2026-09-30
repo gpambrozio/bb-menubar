@@ -169,7 +169,7 @@ Start at login  ✓
 Quit bb Icon            ⌘Q
 ```
 
-- Rows show the thread's `title`, else `titleFallback`, else its short id, then the
+- Rows show the thread's `title`, else `titleFallback`, else its id, then the
   project name. Nothing else.
 - Rows within a section use bb's own chronological list order, copied from the same
   bundle: `latestAttentionAt` descending, then `createdAt` descending, then `id`

@@ -77,8 +77,11 @@ public final class RealtimeSession {
     /// Must finish, with a value or an error, in bounded time: while it runs,
     /// every invalidation only marks the session `dirty`, so a fetch that
     /// never returns stalls the snapshot until the socket drops. Production
-    /// passes `BBAPI.fetchSnapshot`, bounded by `URLSessionHTTPClient`'s
-    /// 10 s request timeout.
+    /// passes `BBAPI.fetchSnapshot`: up to 26 sequential requests (the
+    /// projects and at most 25 thread pages), each bounded as a whole by
+    /// `URLSessionHTTPClient`'s 30 s resource timeout, and the first that
+    /// fails ends the fetch. So a fetch is bounded, though a bb that answers
+    /// every page just inside the timeout can hold it for minutes.
     private let fetch: @Sendable () async throws -> BBSnapshot
     private let onStatus: (ConnectionStatus) -> Void
     private let onSnapshot: (BBSnapshot) -> Void

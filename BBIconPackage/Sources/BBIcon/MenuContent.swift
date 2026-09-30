@@ -74,6 +74,9 @@ struct MenuContent: View {
         .onPreferenceChange(ContentHeightKey.self) { height in
             contentHeight = height
         }
+        // The login item can be switched in System Settings while the panel
+        // is closed, so its checkmark is re-read each time the panel opens.
+        .onAppear { coordinator.refreshLoginItem() }
     }
 
     @ViewBuilder

@@ -162,7 +162,9 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         onClose?(TransportClose(code: code, reason: reason))
     }
 
-    private final class Delegate: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+    /// `Sendable` because `URLSession` calls it on its own queue; checked, not
+    /// `@unchecked`, since its only state is two immutable `@Sendable` closures.
+    private final class Delegate: NSObject, URLSessionWebSocketDelegate, Sendable {
         private let openHandler: @Sendable () -> Void
         private let closeHandler: @Sendable (Int, String) -> Void
 

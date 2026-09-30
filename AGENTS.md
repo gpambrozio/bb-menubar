@@ -97,9 +97,10 @@ into `BBIconCore` instead.
 - **Nothing is shown that cannot be vouched for.** When bb is not running, connecting, or
   reconnecting, the rows from the last connection are dropped and the glyph is dimmed.
 - **`@MainActor` where the code says so, and callbacks that cross a thread must hop.**
-  FSEvents re-enters through `MainActor.assumeIsolated`; `NSWorkspace` completions hop with
-  `Task { @MainActor in }`. An annotation that silences the compiler without making the
-  guarantee is a bug.
+  FSEvents re-enters through `MainActor.assumeIsolated`; the `NSWorkspace` open completion,
+  which arrives on an arbitrary queue, resumes a checked continuation that the main-actor
+  caller awaits, and only `Sendable` failure text crosses it. An annotation that silences
+  the compiler without making the guarantee is a bug.
 - **Collaborators are injected, never reached for** — the file read, process liveness, the
   watch, HTTP, the WebSocket transport, and the clock. That is what makes the chain
   testable without bb, a menu bar, or real sleeps.
