@@ -99,7 +99,8 @@ struct MenuModelTests {
 
     @Test("has status text for every connection state")
     func statusTextIsComplete() {
-        for status in [ConnectionStatus.notRunning, .connecting, .connected, .reconnecting] {
+        // Over `allCases`, so a status added later cannot ship without text.
+        for status in ConnectionStatus.allCases {
             #expect(MenuModel.statusText[status] != nil, "\(status) has no status text")
         }
         #expect(MenuModel.statusText[.notRunning] == "bb is not running")

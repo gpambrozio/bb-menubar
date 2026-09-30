@@ -124,9 +124,17 @@ public enum TrayViewModelBuilder {
             guard let threads = threadsByBucket[bucket], !threads.isEmpty else { return nil }
             // Sorted before the cap, so the fifteen shown are the fifteen bb's
             // own list would put first, not whichever the API sent first.
-            let rows = threads.sorted(by: BucketRule.listOrder).map { row($0, projectNames: state.projectNames) }
-            if rows.count <= sectionRowCap { return TrayMenuSection(bucket: bucket, rows: rows, overflow: 0) }
-            return TrayMenuSection(bucket: bucket, rows: Array(rows.prefix(sectionRowCap)), overflow: rows.count - sectionRowCap)
+            let sorted = threads.sorted(by: BucketRule.listOrder)
+            // Only the shown rows are built; the rest are counted, not drawn.
+            let shown = sorted.prefix(sectionRowCap)
+            // `prefix` never returns more than it was given, so this cannot go
+            // negative; the guard says so rather than leaving it to reasoning.
+            let overflow = sorted.count > shown.count ? sorted.count - shown.count : 0
+            return TrayMenuSection(
+                bucket: bucket,
+                rows: shown.map { row($0, projectNames: state.projectNames) },
+                overflow: overflow
+            )
         }
 
         return TrayViewModel(

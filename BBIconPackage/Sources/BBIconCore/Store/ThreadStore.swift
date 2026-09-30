@@ -20,7 +20,7 @@ public struct BBSnapshot: Equatable, Sendable {
 
 /// Whether this app has a live view of bb. Only `connected` rows are ever
 /// shown; every other state reads as "not connected" and dims the icon.
-public enum ConnectionStatus: String, Sendable {
+public enum ConnectionStatus: String, CaseIterable, Sendable {
     case notRunning
     case connecting
     case connected
