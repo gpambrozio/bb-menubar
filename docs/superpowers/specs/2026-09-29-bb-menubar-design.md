@@ -233,6 +233,7 @@ in the app target.**
 | `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | The socket, injected. Ported from Paseo Icon. |
 | `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, cap re-fetches, reconnect. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot and connection state. |
+| `BBIconCore/Store/ServerConnection.swift` | Server changes: stop the old session, start the new one, drop stale answers. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket mapping above. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Ported: store → icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | Ported: the menu as data. |

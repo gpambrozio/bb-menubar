@@ -43,6 +43,7 @@ agent can see gets tested at all.
 | `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | One WebSocket connection, injected. Ported. |
 | `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, re-fetch (at most once a second), reconnect. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, and error rows. |
+| `BBIconCore/Store/ServerConnection.swift` | Following the runtime file: which server, its realtime session and API, the order of a server change, and which open-thread answer may land. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, and bb's list order. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Store state to icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | The menu as data. Every row, label, and rule. |
