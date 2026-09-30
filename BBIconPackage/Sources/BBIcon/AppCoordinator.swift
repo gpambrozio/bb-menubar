@@ -48,8 +48,8 @@ final class AppCoordinator {
     init(pairingStore: any PairingStore = KeychainPairingStore()) {
         let store = ThreadStore()
         self.store = store
-        // One HTTP client for the app's lifetime, shared by every server and
-        // by getbb.app's redeem and revoke.
+        // One HTTP client for the app's lifetime, shared by every server, the
+        // relay's probe and desktop sessions, and getbb.app's redeem.
         let http = URLSessionHTTPClient()
         let connection = ServerConnection(
             store: store,
@@ -183,28 +183,38 @@ final class AppCoordinator {
     /// Asks before forgetting the pairing with `handle`, then forgets it and
     /// names whatever did not happen. Deferred, as `report` is, so the modal
     /// alert does not run with the panel still open.
+    ///
+    /// getbb.app does not let bb Icon remove its own device, so the question
+    /// says the device stays listed until it is removed at the dashboard, and
+    /// offers to open it once forgotten. A Forget that did not fully succeed
+    /// is followed by an alert naming why, with the same offer.
     func forgetRemote(handle: String) {
         Task { @MainActor [weak self] in
             let alert = NSAlert()
             alert.messageText = "Forget \(handle)?"
-            alert.informativeText = "bb Icon will stop watching \(handle) and ask getbb.app to revoke its pairing. "
-                + "To watch it again, you will need a new machine code."
+            alert.informativeText = PairingController.forgetQuestion(handle: handle)
+            alert.addButton(withTitle: "Forget and Open getbb.app/dashboard")
             alert.addButton(withTitle: "Forget")
             alert.addButton(withTitle: "Cancel")
             NSApp.activate()
-            guard alert.runModal() == .alertFirstButtonReturn, let self else { return }
+            let answer = alert.runModal()
+            guard answer == .alertFirstButtonReturn || answer == .alertSecondButtonReturn, let self else { return }
             self.flowBegan()
             defer { self.flowEnded() }
-            guard let outcome = await self.pairing.forget(), !outcome.problems.isEmpty else { return }
+            guard let outcome = await self.pairing.forget() else { return }
+            if answer == .alertFirstButtonReturn { Self.openDashboard() }
+            guard !outcome.problems.isEmpty else { return }
             // Awaited, so a quit waiting on this flow waits for the alert too.
             await self.report(
                 title: "bb Icon — forgetting \(outcome.handle) did not fully succeed",
-                detail: outcome.problems.joined(separator: "\n\n"),
-                action: outcome.revokeFailed ? AlertAction(title: "Open getbb.app/dashboard") {
-                    if let url = URL(string: "https://getbb.app/dashboard") { NSWorkspace.shared.open(url) }
-                } : nil
+                detail: outcome.detail,
+                action: AlertAction(title: "Open getbb.app/dashboard") { Self.openDashboard() }
             ).value
         }
+    }
+
+    private static func openDashboard() {
+        if let url = URL(string: PairingController.dashboard) { NSWorkspace.shared.open(url) }
     }
 
     /// Pairs, and returns the outcome for the window to show. While the app

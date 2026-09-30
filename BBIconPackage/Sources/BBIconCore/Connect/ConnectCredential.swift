@@ -19,7 +19,7 @@ public struct Pairing: Codable, Equatable, Sendable {
     public let serverURL: URL
     /// The server's DNS label under getbb.app, which names it in the menu.
     public let handle: String
-    /// This device's id in the getbb.app dashboard; what revoke names.
+    /// This device's id in the getbb.app dashboard.
     public let machineId: String
     public let credential: String
 

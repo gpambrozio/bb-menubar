@@ -4,12 +4,13 @@ import Testing
 @testable import BBIconCore
 
 /// Loading, pairing, and forgetting, against a fake Keychain, a fake
-/// getbb.app, and an executor the test answers by hand. Redeem and revoke
-/// answers are shaped from bb 0.44.0's sources (see `ConnectPairingTests`).
+/// getbb.app, and an executor the test answers by hand. Redeem answers are
+/// shaped from bb 0.44.0's sources (see `ConnectPairingTests`). Nothing here
+/// ever asks getbb.app to revoke a device: the live relay refuses a device's
+/// own revoke (401), so no request but the redeem is ever sent.
 @MainActor
 struct PairingControllerTests {
     static let redeemPath = "/api/connect/redeem-machine"
-    static let revokePath = "/api/connect/revoke-machine"
 
     static func pairing(_ handle: String) throws -> Pairing {
         try Pairing(
@@ -20,75 +21,32 @@ struct PairingControllerTests {
         )
     }
 
-    /// Hands requests to a `FakeHTTPClient`, except that a request for a held
-    /// path waits for its gate first. Records each path as it is asked,
-    /// before any wait, so a test can see a request that has not answered.
-    final class GatedHTTPClient: HTTPClient, @unchecked Sendable {
-        private let inner: FakeHTTPClient
-        private let lock = NSLock()
-        private var gates: [String: AsyncGate] = [:]
-        private var askedPaths: [String] = []
-
-        init(_ inner: FakeHTTPClient) {
-            self.inner = inner
-        }
-
-        var asked: [String] { lock.withLock { askedPaths } }
-
-        func hold(_ path: String) -> AsyncGate {
-            let gate = AsyncGate()
-            lock.withLock { gates[path] = gate }
-            return gate
-        }
-
-        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-            let path = request.url?.path ?? ""
-            let gate = lock.withLock { () -> AsyncGate? in
-                askedPaths.append(path)
-                return gates.removeValue(forKey: path)
-            }
-            if let gate { await gate.wait() }
-            return try await inner.send(request)
-        }
-    }
-
     @MainActor
     struct Harness {
         let threadStore = ThreadStore()
         let http = FakeHTTPClient()
-        let gated: GatedHTTPClient
         let factory = FakeTransportFactory()
         let keychain: FakePairingStore
         let executor = ManualPairingStoreExecutor()
         let connection: ServerConnection
         let controller: PairingController
 
-        /// getbb.app redeems any code as `studio` and revokes anything.
+        /// getbb.app redeems any code as `studio`.
         init(stored: Pairing? = nil) async {
             keychain = FakePairingStore(stored)
-            gated = GatedHTTPClient(http)
             connection = ServerConnection(store: threadStore, http: http, makeTransport: factory.make, clock: TestClock())
             controller = PairingController(
-                store: keychain, http: gated, executor: executor, threadStore: threadStore, connection: connection
+                store: keychain, http: http, executor: executor, threadStore: threadStore, connection: connection
             )
             await http.respond(
                 PairingControllerTests.redeemPath,
                 body: #"{"credential":"cred-test-studio","machineId":"m-studio","serverUrl":"https://studio.getbb.app"}"#
             )
-            await revokeAnswers(status: 200, body: #"{"ok":true}"#)
         }
 
-        func revokeAnswers(status: Int, body: String = "") async {
-            await http.respond(PairingControllerTests.revokePath, status: status, body: body)
-        }
-
-        /// The machine id of every revoke sent, in order.
-        func revoked() async -> [String] {
-            await http.requests
-                .filter { $0.url?.path == PairingControllerTests.revokePath }
-                .compactMap { request in
-                    request.httpBody.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?["machineId"]
-                }
+        /// The path of every request sent to getbb.app, in order.
+        func sent() async -> [String] {
+            await http.requests.compactMap { $0.url?.path }
         }
 
         /// The handle the menu offers to forget; nil means it offers Connect.
@@ -132,7 +90,7 @@ struct PairingControllerTests {
         #expect(h.keychain.pairing == studio)
         #expect(h.paired == "studio")
         #expect(h.connection.serverURL == nil, "no runtime answer yet, so no server")
-        #expect(await h.revoked().isEmpty)
+        #expect(await h.sent() == [Self.redeemPath])
     }
 
     @Test("pairing while this Mac's own bb is in use says the pairing waits")
@@ -145,13 +103,16 @@ struct PairingControllerTests {
         #expect(h.paired == "studio")
     }
 
-    @Test("a pairing that cannot be stored is revoked, named, and not used")
-    func saveFailureRevokes() async throws {
+    @Test("a pairing that cannot be stored is named, not used, and pointed to the dashboard")
+    func saveFailureNamesUnusedDevice() async throws {
         let h = await Harness()
         h.keychain.failSave("the Keychain is full")
         let outcome = await h.controller.pair(input: "code-test")
-        #expect(outcome == .failed("the Keychain is full " + PairingController.codeSpent))
-        #expect(await h.revoked() == ["m-studio"])
+        #expect(outcome == .failed(
+            "the Keychain is full " + PairingController.codeSpent + " " + PairingController.unusedDevice
+        ))
+        #expect(PairingController.unusedDevice.contains("getbb.app/dashboard"))
+        #expect(await h.sent() == [Self.redeemPath], "no revoke is attempted")
         #expect(h.errors == ["the Keychain is full"])
         #expect(h.paired == nil)
         #expect(h.controller.pairing == nil)
@@ -166,28 +127,29 @@ struct PairingControllerTests {
         #expect(h.paired == nil)
     }
 
-    @Test("a pairing replaced by a new one is revoked, and a failed revoke is a notice")
-    func replacingRevokesOld() async throws {
+    @Test("a pairing replaced by a new one is named for removal at the dashboard, and nothing is revoked")
+    func replacingNamesOldDevice() async throws {
         let h = await Harness(stored: try Self.pairing("mini"))
         await h.controller.load()
-        #expect(await h.controller.pair(input: "code-test") == .paired(notice: nil))
-        #expect(await h.revoked() == ["m-mini"])
+        #expect(await h.controller.pair(input: "code-test") == .paired(notice: PairingController.replacedStillListed(handle: "mini")))
+        #expect(PairingController.replacedStillListed(handle: "mini").contains("getbb.app/dashboard"))
+        #expect(await h.sent() == [Self.redeemPath])
         #expect(h.paired == "studio")
 
-        let again = await Harness(stored: try Self.pairing("mini"))
-        await again.controller.load()
-        await again.revokeAnswers(status: 503)
-        guard case .paired(let notice?) = await again.controller.pair(input: "code-test") else {
-            Issue.record("expected a notice naming the failed revoke")
-            return
-        }
-        #expect(notice.contains("Could not revoke bb Icon's pairing with mini"))
-        #expect(again.paired == "studio")
+        // Replaced while this Mac's own bb is in use: both notices.
+        let local = await Harness(stored: try Self.pairing("mini"))
+        await local.controller.load()
+        let url = try #require(URL(string: "http://127.0.0.1:38886"))
+        local.connection.apply(.running(RuntimeInfo(pid: 1, serverURL: url, version: "0.44.0")))
+        #expect(await local.controller.pair(input: "code-test") == .paired(notice: [
+            PairingController.pairedWhileLocal(handle: "studio"),
+            PairingController.replacedStillListed(handle: "mini"),
+        ].joined(separator: "\n\n")))
     }
 
     // MARK: - Forget
 
-    @Test("Forget stops using the pairing before it touches the Keychain or getbb.app")
+    @Test("Forget stops using the pairing before it touches the Keychain, and sends nothing to getbb.app")
     func forgetStopsFirst() async throws {
         let h = await Harness(stored: try Self.pairing("mini"))
         await h.controller.load()
@@ -196,27 +158,24 @@ struct PairingControllerTests {
         await eventually { h.executor.pending == 1 }
         #expect(h.paired == nil, "the menu offers Connect at once")
         #expect(h.controller.pairing == nil)
-        #expect(await h.revoked().isEmpty, "the revoke waits for the delete")
         h.executor.release()
         let report = await forgetting.value
-        #expect(report == ForgetReport(handle: "mini", problems: [], revokeFailed: false))
-        #expect(h.keychain.pairing == nil)
-        #expect(await h.revoked() == ["m-mini"])
-    }
-
-    @Test("Forget deletes the item even when the revoke fails, and names the revoke")
-    func forgetDeletesWhenRevokeFails() async throws {
-        let h = await Harness(stored: try Self.pairing("mini"))
-        await h.controller.load()
-        await h.revokeAnswers(status: 500)
-        let report = try #require(await h.controller.forget())
-        #expect(report.revokeFailed)
-        #expect(report.problems.count == 1)
-        #expect(report.problems.first?.contains("getbb.app/dashboard") == true)
+        #expect(report == ForgetReport(handle: "mini", problems: []))
         #expect(h.keychain.deletes == 1)
         #expect(h.keychain.pairing == nil)
-        #expect(h.paired == nil)
         #expect(h.errors.isEmpty)
+        #expect(await h.sent().isEmpty, "no revoke: getbb.app refuses a device's own")
+    }
+
+    @Test("a Forget's report always says the device is still listed at the dashboard")
+    func forgetReportPointsToDashboard() {
+        let clean = ForgetReport(handle: "mini", problems: [])
+        #expect(clean.detail == PairingController.stillListed(handle: "mini"))
+        #expect(clean.detail.contains("getbb.app/dashboard"))
+        let failed = ForgetReport(handle: "mini", problems: ["the Keychain is locked"])
+        #expect(failed.detail == "the Keychain is locked\n\n" + PairingController.stillListed(handle: "mini"))
+        #expect(PairingController.forgetQuestion(handle: "mini").contains("getbb.app/dashboard"))
+        #expect(PairingController.dashboard == "https://getbb.app/dashboard")
     }
 
     @Test("a delete that fails is named in the report and the pairing row, until a Keychain call succeeds")
@@ -226,7 +185,7 @@ struct PairingControllerTests {
         h.keychain.failDelete("the Keychain is locked")
         let report = try #require(await h.controller.forget())
         let expected = "the Keychain is locked " + PairingController.stillStored
-        #expect(report == ForgetReport(handle: "mini", problems: [expected], revokeFailed: false))
+        #expect(report == ForgetReport(handle: "mini", problems: [expected]))
         #expect(h.errors == [expected])
         #expect(h.paired == nil)
 
@@ -257,7 +216,7 @@ struct PairingControllerTests {
         #expect(h.keychain.deletes == 0)
         #expect(h.keychain.pairing == studio)
         #expect(h.paired == "studio")
-        #expect(await h.revoked() == ["m-mini"], "the forgotten pairing is revoked once")
+        #expect(await h.sent() == [Self.redeemPath])
     }
 
     @Test("a launch-time load that answers after a pair is dropped")
@@ -318,10 +277,12 @@ struct PairingControllerTests {
         h.executor.release()
         await eventually { h.executor.pending == 1 }
         h.executor.release()
-        #expect(await pairing.value == .failed("the Keychain is full " + PairingController.codeSpent))
+        #expect(await pairing.value == .failed(
+            "the Keychain is full " + PairingController.codeSpent + " " + PairingController.unusedDevice
+        ))
         #expect(h.keychain.deletes == 1)
         #expect(h.paired == nil)
-        #expect(await h.revoked() == ["m-mini", "m-studio"])
+        #expect(await h.sent() == [Self.redeemPath])
         if deleteFails {
             #expect(h.keychain.pairing != nil)
             #expect(h.errors == ["the Keychain is locked " + PairingController.stillStored])
@@ -331,12 +292,11 @@ struct PairingControllerTests {
         }
     }
 
-    @Test("busy while a Forget runs, until its revoke has answered")
-    func forgetBusyUntilRevokeAnswers() async throws {
+    @Test("busy while a Forget runs, until its delete has answered")
+    func forgetBusyUntilDeleteAnswers() async throws {
         let h = await Harness(stored: try Self.pairing("mini"))
         await h.controller.load()
         h.executor.hold()
-        let revoke = h.gated.hold(Self.revokePath)
         let forgetting = Task { await h.controller.forget() }
         await eventually { h.executor.pending == 1 }
         #expect(h.controller.isBusy)
@@ -345,12 +305,9 @@ struct PairingControllerTests {
             await h.controller.waitUntilIdle()
             idle.raised = true
         }
-        h.executor.release()
-        await eventually { h.gated.asked.contains(Self.revokePath) }
         await settle()
-        #expect(h.controller.isBusy, "the delete is done, the revoke is not")
         #expect(!idle.raised)
-        revoke.open()
+        h.executor.release()
         #expect(await forgetting.value?.problems == [])
         await waiting.value
         #expect(idle.raised)
