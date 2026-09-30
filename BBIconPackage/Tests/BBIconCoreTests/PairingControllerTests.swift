@@ -261,7 +261,7 @@ struct PairingControllerTests {
     }
 
     @Test(
-        "a pair's save that fails after a Forget ran deletes the forgotten item, and names a failed delete",
+        "a pair's save that fails after a Forget ran deletes the forgotten item, and names a failed delete in the row and the outcome",
         arguments: [false, true]
     )
     func failedSaveAfterForgetDeletes(deleteFails: Bool) async throws {
@@ -277,15 +277,17 @@ struct PairingControllerTests {
         h.executor.release()
         await eventually { h.executor.pending == 1 }
         h.executor.release()
-        #expect(await pairing.value == .failed(
-            "the Keychain is full " + PairingController.codeSpent + " " + PairingController.unusedDevice
-        ))
+        let saveFailure = "the Keychain is full " + PairingController.codeSpent + " " + PairingController.unusedDevice
+        let cleanupFailure = "the Keychain is locked " + PairingController.stillStored
+        // A failed delete is in the outcome as well as the row: a pair that
+        // ends while quitting shows only the outcome.
+        #expect(await pairing.value == .failed(deleteFails ? saveFailure + "\n\n" + cleanupFailure : saveFailure))
         #expect(h.keychain.deletes == 1)
         #expect(h.paired == nil)
         #expect(await h.sent() == [Self.redeemPath])
         if deleteFails {
             #expect(h.keychain.pairing != nil)
-            #expect(h.errors == ["the Keychain is locked " + PairingController.stillStored])
+            #expect(h.errors == [cleanupFailure])
         } else {
             #expect(h.keychain.pairing == nil)
             #expect(h.errors.isEmpty)

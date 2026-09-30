@@ -181,7 +181,8 @@ public final class PairingController {
     /// the code is spent and the device it made should be removed at the
     /// dashboard. If a Forget ran while that save was in flight, it left the
     /// item alone for this pair's sake; with the save failed, the item may
-    /// still hold the forgotten pairing, so it is deleted here. A pairing this
+    /// still hold the forgotten pairing, so it is deleted here, and a failed
+    /// delete is named in the outcome after the save's failure. A pairing this
     /// one replaces is named in the notice, to be removed at the dashboard.
     /// When this Mac's own bb is the server in use, the new pairing is kept
     /// but unused, and the notice says so: nothing else in the tray would
@@ -205,11 +206,15 @@ public final class PairingController {
         if case .failure(let error) = saved {
             let message = errorText(error)
             threadStore.setError(.pairing, message)
-            // Only a Forget moves the generation while a pair is saving.
-            if generation != generationBeforeSave {
-                await deleteForgotten()
+            let failure = [message, Self.codeSpent, Self.unusedDevice].joined(separator: " ")
+            // Only a Forget moves the generation while a pair is saving. Its
+            // cleanup failing means the forgotten pairing returns at the next
+            // launch; that goes in the outcome too, because the `.pairing` row
+            // is not seen when the outcome is shown while quitting.
+            if generation != generationBeforeSave, let cleanup = await deleteForgotten() {
+                return .failed(failure + "\n\n" + cleanup)
             }
-            return .failed([message, Self.codeSpent, Self.unusedDevice].joined(separator: " "))
+            return .failed(failure)
         }
 
         generation += 1
