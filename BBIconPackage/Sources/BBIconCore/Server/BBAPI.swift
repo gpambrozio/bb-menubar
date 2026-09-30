@@ -66,6 +66,9 @@ public struct BBAPI: Sendable {
             for row in list.elements where seen.insert(row.id).inserted {
                 threads.append(row)
             }
+            // `LenientList` numbers items within their page, so `item 3` on
+            // the second page is the 203rd row; the id beside it is what
+            // names the thread.
             failures += list.failures
             // Every array slot is either an element or a failure, so a row
             // that failed to decode still counts toward a full page.
@@ -79,6 +82,11 @@ public struct BBAPI: Sendable {
     /// Asks bb to show a thread in its connected app windows, as
     /// `bb thread open <id>` does. bb answers how many clients it reached;
     /// none is an error, because the click did nothing the user can see.
+    ///
+    /// bb 0.44.0 counts every connected `/ws` socket in `delivered`, bb Icon's
+    /// own realtime socket included, so the count is an upper bound on the
+    /// windows that navigated. `.noWindow` is still right when it fires, but
+    /// it fires only when nothing at all is connected.
     public func openThread(_ threadId: String) async throws {
         var request = URLRequest(url: try url(path: ["api", "v1", "threads", threadId, "open"], query: []))
         request.httpMethod = "POST"

@@ -106,6 +106,23 @@ struct BBAPITests {
         #expect(await http.requests.first?.url?.absoluteString == "http://127.0.0.1:38886/api/v1/projects")
     }
 
+    @Test("a server URL with a base path keeps it in front of every route")
+    func serverURLBasePathIsKept() async throws {
+        let http = FakeHTTPClient()
+        await http.respond("/bb/api/v1/projects", body: "[]")
+        await http.respond("/bb/api/v1/threads?archived=false&limit=200&offset=0", body: "[]")
+        await http.respond("/bb/api/v1/threads/thr_a/open", body: #"{"delivered":1}"#)
+        let bbAPI = try api(http, server: URL(string: "http://127.0.0.1:1/bb/"))
+        _ = try await bbAPI.fetchSnapshot()
+        try await bbAPI.openThread("thr_a")
+        #expect(await http.requestKeys == [
+            "/bb/api/v1/projects",
+            "/bb/api/v1/threads?archived=false&limit=200&offset=0",
+            "/bb/api/v1/threads/thr_a/open",
+        ])
+        #expect(await http.requests.first?.url?.absoluteString == "http://127.0.0.1:1/bb/api/v1/projects")
+    }
+
     // MARK: - Failures
 
     @Test("HTTP 401 and 403 read as bb requiring authentication", arguments: [401, 403])

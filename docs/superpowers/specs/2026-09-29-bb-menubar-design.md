@@ -181,7 +181,7 @@ gone then too: dimmed means "not connected", whatever the reason.
 bb.app registers no URL scheme, so there is no deep link. bb itself can navigate its
 connected apps: `bb thread open <id>` is a thin wrapper over
 `POST {serverUrl}/api/v1/threads/<id>/open` with body `{"file":null}`, which answers
-`{"delivered": N}` — the number of connected bb app clients the request reached. bb
+`{"delivered": N}` — the number of connected clients the request reached. bb
 Icon calls that endpoint directly rather than spawning the CLI, so there is no Node
 subprocess, no CLI path inside the bundle to track, and no inherited `BB_THREAD_ID`
 (the CLI refuses to open a different thread when that is set).
@@ -194,6 +194,10 @@ A row click:
 A failed request, a non-2xx status, or `delivered == 0` is named in the error row
 ("bb had no open window to show the thread in"). The request reaches every connected
 bb client, not only this Mac's window — the same behaviour as `bb thread open`.
+bb 0.44.0 counts every connected `/ws` socket in `delivered`, bb Icon's own realtime
+socket included, so the count overstates the windows that navigated. `delivered == 0`
+still means no window saw the click, but it only happens when nothing at all is
+connected.
 
 `…and N more` and **Open bb** only activate bb.app (launching it when not running).
 

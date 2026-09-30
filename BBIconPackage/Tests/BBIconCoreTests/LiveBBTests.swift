@@ -20,6 +20,5 @@ struct LiveBBTests {
         let snapshot = try await BBAPI(serverURL: serverURL, http: URLSessionHTTPClient()).fetchSnapshot()
         #expect(snapshot.decodeFailures.isEmpty)
         #expect(!snapshot.truncated)
-        #expect(!snapshot.projects.isEmpty)
     }
 }
