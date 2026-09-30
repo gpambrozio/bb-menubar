@@ -201,12 +201,13 @@ public final class ServerConnection {
             // No server known means bb is not running or not connected yet,
             // so all a click can do is what `prepare` already did.
             guard request == self.openRequests, let api = self.api else { return }
+            let target = self.target
             let failure: String?
             do {
                 try await api.openThread(threadId)
                 failure = nil
             } catch {
-                failure = errorText(error)
+                failure = Self.scrub(errorText(error), for: target)
             }
             guard request == self.openRequests else { return }
             self.store.setError(.open, failure)
@@ -239,6 +240,15 @@ public final class ServerConnection {
         session.start()
     }
 
+    /// `text` without a remote target's credential in it. Every `.fetch` and
+    /// `.open` row passes through here: they carry what a transport, a
+    /// server, or the relay said — a `/ws` close reason among them — and none
+    /// of those is trusted not to echo the header it was sent.
+    static func scrub(_ text: String, for target: ServerTarget?) -> String {
+        guard case .remote(let pairing) = target else { return text }
+        return scrubbing(pairing.credential, from: text)
+    }
+
     // MARK: - Naming a remote failure
 
     private func sessionReported(_ status: ConnectionStatus) {
@@ -251,7 +261,7 @@ public final class ServerConnection {
     /// The session's fetch or socket error, or nil after a fetch that
     /// succeeded, which ends the trouble.
     private func sessionFailed(_ message: String?) {
-        sessionError = message
+        sessionError = message.map { Self.scrub($0, for: target) }
         if message == nil {
             endTrouble()
         } else if store.state.status != .connected {

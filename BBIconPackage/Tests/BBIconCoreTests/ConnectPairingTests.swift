@@ -197,7 +197,7 @@ struct ConnectPairingTests {
         (.expired, "That code has expired — codes last 10 minutes. Make a new one."),
         (.unreachable("HTTP 502"), "getbb.app could not be reached: HTTP 502"),
         (.refused, "getbb.app did not accept that code."),
-        (.unreadableAnswer, "getbb.app answered in a way bb Icon cannot read."),
+        (.unreadableAnswer, "getbb.app answered in a way bb Icon cannot read. It may have paired anyway: if a new device is listed at getbb.app/dashboard, remove it there."),
     ])
     func messages(error: ConnectPairingError, message: String) {
         #expect(error.message == message)

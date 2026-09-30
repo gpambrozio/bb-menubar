@@ -39,7 +39,9 @@ public enum ConnectPairingError: MessageError, Equatable, Sendable {
         case .expired: "That code has expired — codes last 10 minutes. Make a new one."
         case .unreachable(let detail): "getbb.app could not be reached: \(detail)"
         case .refused: "getbb.app did not accept that code."
-        case .unreadableAnswer: "getbb.app answered in a way bb Icon cannot read."
+        case .unreadableAnswer:
+            "getbb.app answered in a way bb Icon cannot read. It may have paired anyway: "
+                + "if a new device is listed at getbb.app/dashboard, remove it there."
         }
     }
 }

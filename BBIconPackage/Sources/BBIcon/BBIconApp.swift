@@ -45,11 +45,27 @@ struct BBIconApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Set by the scene once both exist. Quitting from the menu calls `stop()`
-    /// itself; logging out and shutting down bypass that row. A raw `SIGTERM`
-    /// still gets neither, because AppKit installs no handler for it — the
-    /// socket closes with the process instead.
+    /// Set by the scene once both exist. Every way of quitting through AppKit
+    /// — the menu's Quit row, logging out, shutting down — ends in
+    /// `applicationWillTerminate`, which stops the coordinator. A raw
+    /// `SIGTERM` gets neither, because AppKit installs no handler for it —
+    /// the socket closes with the process instead.
     weak var coordinator: AppCoordinator?
+
+    /// A pair or Forget under way is let finish before the app goes. Quitting
+    /// in the middle of one could spend a code without storing its pairing,
+    /// or delete a pairing without revoking it, leaving a machine slot held
+    /// at getbb.app. The wait is bounded by the HTTP client's 30 s resource
+    /// timeout per request (a pair makes at most two, a Forget one) plus
+    /// the Keychain call, which only a Keychain prompt left open can hold up.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let coordinator, coordinator.isPairingBusy else { return .terminateNow }
+        Task { @MainActor in
+            await coordinator.waitForPairing()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()

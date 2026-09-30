@@ -13,7 +13,8 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
     public var onError: ((String) -> Void)?
 
     private let request: TransportRequest
-    private var session: URLSession?
+    /// Internal to read, so a test can check the session refuses redirects.
+    private(set) var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     /// The tail of the send chain, so frames keep their order.

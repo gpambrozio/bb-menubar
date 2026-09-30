@@ -46,6 +46,11 @@ bb Icon watches exactly one server:
 2. **The paired remote bb**, when there is a pairing and no local bb is running.
 3. Otherwise nothing: the menu says **bb is not running** and offers to pair.
 
+The pairing is read from the Keychain off the main thread at launch, and a Keychain prompt
+can hold that read up. Until it answers, a paired Mac with no local bb shows **bb is not
+running** and **Connect to a remote bb…**, as if unpaired; the remote bb is dialled as soon
+as the read answers.
+
 Moving between these reuses the existing server-change path (`ServerConnection`): the old
 session stops, the rows drop, and the new one connects. The rule "the runtime file is the
 only server source" becomes "the runtime file, then the pairing — and nothing else": still
@@ -80,7 +85,7 @@ a small window:
   | `expired` or 410 | That code has expired — codes last 10 minutes. Make a new one. |
   | ≥ 500, or no answer | getbb.app could not be reached: … |
   | any other refusal | getbb.app did not accept that code. |
-  | a body that is not the expected JSON | getbb.app answered in a way bb Icon cannot read. |
+  | a body that is not the expected JSON | getbb.app answered in a way bb Icon cannot read. It may have paired anyway: if a new device is listed at getbb.app/dashboard, remove it there. |
 
 - On success the pairing `{serverUrl, handle, machineId, credential}` is stored as one
   Keychain generic-password item (service `br.eng.gustavo.bb-menubar.connect`,
@@ -153,12 +158,20 @@ The layout is unchanged except for the status line and one footer row:
 | remote bb | `<handle> · connected` / `connecting` / `reconnecting` | **Forget `<handle>`…** |
 | neither | `bb is not running` | **Connect to a remote bb…** |
 
-**Forget `<handle>`…** asks for confirmation, then makes a best-effort
+**Forget `<handle>`…** asks for confirmation, then stops using the pairing at once (the
+menu is back to **Connect to a remote bb…** and the socket closed), deletes the Keychain
+item, and then makes a best-effort
 `POST https://getbb.app/api/connect/revoke-machine` with `{"machineId": …}` and its own
-header, and deletes the Keychain item whatever the answer. If the revoke is refused or
-unreachable, the confirmation says so and points to getbb.app/dashboard to remove the
-device by hand. (Whether the relay lets a device revoke itself is not visible in bb's
-code; the design does not depend on it.)
+header, from the copy still in memory; the item is deleted whatever the revoke answers. If
+the revoke is refused or unreachable, or the delete fails, a follow-up alert says so, and
+for the revoke points to getbb.app/dashboard to remove the device by hand. (Whether the
+relay lets a device revoke itself is not visible in bb's code; the design does not depend
+on it.) A Forget that lands while a new pairing is being saved leaves that newer item
+alone.
+
+Quitting while a pair or Forget is under way waits for it to finish — bounded by the HTTP
+timeouts and the Keychain — so a spent code is not lost unstored and a deleted pairing is
+not left unrevoked.
 
 ## Click-through, remote
 
@@ -177,11 +190,12 @@ bb.app not installed on this Mac is named as today.
 | `BBIconCore/Connect/KeychainPairingStore.swift` | The Keychain implementation. `Security` only, no AppKit, so it is core. |
 | `BBIconCore/Connect/ConnectHealth.swift` | The `/api/connect/servers` probe and its classification. |
 | `BBIconCore/Connect/ConnectRevoke.swift` | The best-effort revoke. |
+| `BBIconCore/Connect/PairingController.swift` | Load at launch, pair, Forget: their order, the `.pairing` row, the races between them, revoking any pairing that is dropped. Keychain calls off the main thread through an injected executor. |
 | `BBIconCore/Store/ServerConnection.swift` | Chooses local, then remote; a target is URL plus headers. |
 | `BBIconCore/Server/BBAPI.swift`, `RealtimeSession.swift` | Take the target's headers. |
 | `BBIconCore/Tray/MenuModel.swift` | The status line and the two footer rows. |
 | `BBIcon/PairingWindow.swift` | The code field and its messages. Decides nothing. |
-| `BBIcon/AppCoordinator.swift` | Wiring, the Forget confirmation. |
+| `BBIcon/AppCoordinator.swift` | Wiring, the pairing window, the Forget confirmation and its follow-up alert. |
 
 ## Testing
 

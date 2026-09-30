@@ -49,8 +49,9 @@ agent can see gets tested at all.
 | `BBIconCore/Connect/KeychainPairingStore.swift` | The one Keychain item. `Security` only, so it is core. |
 | `BBIconCore/Connect/ConnectHealth.swift` | The `/api/connect/servers` probe and what each answer means. |
 | `BBIconCore/Connect/ConnectRevoke.swift` | Forget's best-effort revoke. |
-| `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, the remote server's name and the paired handle, and the error rows (`ErrorSource`; `.pairing` is a Keychain failure, owned by the app). |
-| `BBIconCore/Store/ServerConnection.swift` | Which server — this Mac's bb, else the pairing — its realtime session and API, the order of a server change, the relay probe for a failing remote, and which open-thread answer may land. |
+| `BBIconCore/Connect/PairingController.swift` | The pairing's life: the launch-time load, pair, Forget — their order, the `.pairing` row, the races between them (a stale load, a Forget during a save), revoking any pairing that is dropped, and whether one is under way. Keychain calls go through an injected executor, off the main thread. |
+| `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, the remote server's name and the paired handle, and the error rows (`ErrorSource`; `.pairing` is a Keychain failure, owned by `PairingController`). |
+| `BBIconCore/Store/ServerConnection.swift` | Which server — this Mac's bb, else the pairing — its realtime session and API, the order of a server change, the relay probe for a failing remote, which open-thread answer may land, and scrubbing a remote credential out of every `.fetch` and `.open` row. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, and bb's list order. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Store state to icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | The menu as data. Every row, label, and rule. |
@@ -58,8 +59,8 @@ agent can see gets tested at all.
 | `BBIcon/MenuBarLabel.swift` | The rendered menu bar item: glyph plus count, dimmed when not connected. |
 | `BBIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows. Decides nothing. |
 | `BBIcon/PairingWindow.swift` | The "Connect to a remote bb…" window: instructions, code field, the named failure. Decides nothing. |
-| `BBIcon/AppCoordinator.swift` | Wiring: the object graph, login item, alerts, `NSWorkspace`, the Keychain queue, and the order of the pair and Forget steps. |
-| `BBIcon/BBIconApp.swift` | The `MenuBarExtra` scene and the app delegate. |
+| `BBIcon/AppCoordinator.swift` | Wiring: the object graph, login item, alerts (the Forget confirmation among them), the pairing window, `NSWorkspace`. |
+| `BBIcon/BBIconApp.swift` | The `MenuBarExtra` scene and the app delegate, which holds a quit until a pair or Forget under way has finished. |
 
 If you find yourself adding a decision to `AppCoordinator`, that is the signal to extract it
 into `BBIconCore` instead.

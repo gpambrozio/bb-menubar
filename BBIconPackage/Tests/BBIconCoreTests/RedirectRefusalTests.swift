@@ -40,6 +40,18 @@ struct RedirectRefusalTests {
         }
         #expect(followed == nil)
     }
+
+    @Test("the WebSocket transport's session is the one with the redirect-refusing delegate")
+    @MainActor
+    func webSocketSessionUsesDelegate() throws {
+        // Port 9 on loopback: nothing listens, and nothing leaves the Mac.
+        let transport = URLSessionWebSocketTransport(
+            request: TransportRequest(url: try #require(URL(string: "ws://127.0.0.1:9/ws")))
+        )
+        transport.connect()
+        defer { transport.close(code: 1000, reason: "test") }
+        #expect(transport.session?.delegate is URLSessionWebSocketTransport.Delegate)
+    }
 }
 
 /// Answers every request to `relayHost` with a 307 to `elsewhere.test`, the

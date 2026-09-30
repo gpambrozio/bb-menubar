@@ -483,6 +483,53 @@ struct ServerConnectionTests {
         #expect(h.http.headers.allSatisfy { !$0.headers.keys.contains { $0.lowercased() == "origin" } })
     }
 
+    // MARK: - The credential stays out of the rows
+
+    @Test("a remote socket's close reason reaches the fetch row without the credential")
+    func remoteFetchRowScrubbed() async throws {
+        let h = Harness()
+        h.http.setHealth(Self.remote, status: 200, body: Self.liveBody)
+        h.connection.setPairing(try h.pairing())
+        h.connection.apply(.notRunning(error: nil))
+        try h.transport(0).simulateClose(code: 1008, reason: "refused \(Self.credential)")
+        let expected = "bb live updates: refused \(Pairing.redacted) (code 1008)"
+        await eventually {
+            h.store.state.errors == [expected] && h.http.answered.contains("\(Self.remote) /api/connect/servers")
+        }
+        #expect(h.store.state.errors == [expected])
+    }
+
+    /// Fails every open request with a message that quotes the credential.
+    struct EchoingOpenFailure: HTTPClient {
+        struct Echo: MessageError {
+            let message: String
+        }
+
+        let inner: ServersHTTPClient
+
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            if request.url?.path.hasSuffix("/open") == true {
+                throw Echo(message: "sent \(request.value(forHTTPHeaderField: "x-bb-connect-machine") ?? "")")
+            }
+            return try await inner.send(request)
+        }
+    }
+
+    @Test("a remote open failure reaches the open row without the credential")
+    func remoteOpenRowScrubbed() async throws {
+        let store = ThreadStore()
+        let factory = FakeTransportFactory()
+        let connection = ServerConnection(
+            store: store, http: EchoingOpenFailure(inner: ServersHTTPClient()), makeTransport: factory.make, clock: TestClock()
+        )
+        connection.setPairing(try Harness().pairing())
+        connection.apply(.notRunning(error: nil))
+        try #require(factory.last).simulateOpen()
+        await eventually { store.state.status == .connected }
+        await connection.openThread("thr_\(Self.remote)", prepare: { true }).value
+        #expect(store.state.errors == ["sent \(Pairing.redacted)"])
+    }
+
     // MARK: - Naming a remote failure
 
     nonisolated static let offlineBody = #"{"servers":[{"handle":"mini","live":false}]}"#
