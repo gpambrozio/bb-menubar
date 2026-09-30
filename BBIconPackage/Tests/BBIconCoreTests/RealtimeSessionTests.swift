@@ -52,6 +52,34 @@ struct RealtimeSessionTests {
         }
     }
 
+    /// A `prepareDial` the test answers by hand, call by call.
+    @MainActor
+    final class FakePreparer {
+        private(set) var calls = 0
+        private var pending: [CheckedContinuation<[String: String], any Error>] = []
+
+        var waiting: Int { pending.count }
+
+        func prepare() async throws -> [String: String] {
+            calls += 1
+            return try await withCheckedThrowingContinuation { pending.append($0) }
+        }
+
+        func answer(_ headers: [String: String]) {
+            guard !pending.isEmpty else { return }
+            pending.removeFirst().resume(returning: headers)
+        }
+
+        func fail(_ error: any Error) {
+            guard !pending.isEmpty else { return }
+            pending.removeFirst().resume(throwing: error)
+        }
+    }
+
+    struct PrepareFailure: MessageError {
+        let message: String
+    }
+
     enum Event: Equatable {
         case status(ConnectionStatus)
         case snapshot(BBSnapshot)
@@ -79,11 +107,12 @@ struct RealtimeSessionTests {
         let log = Log()
         let session: RealtimeSession
 
-        init(headers: [String: String] = [:]) throws {
+        init(headers: [String: String] = [:], prepareDial: RealtimeSession.DialPreparation? = nil) throws {
             let server = try #require(URL(string: "http://127.0.0.1:38886"))
             session = RealtimeSession(
                 serverURL: server,
                 headers: headers,
+                prepareDial: prepareDial,
                 makeTransport: factory.make,
                 fetch: { @MainActor [fetcher] in try await fetcher.fetch() },
                 onStatus: { [log] in log.events.append(.status($0)) },
@@ -176,6 +205,130 @@ struct RealtimeSessionTests {
         for transport in h.factory.transports {
             #expect(!transport.request.headers.keys.contains { $0.caseInsensitiveCompare("Origin") == .orderedSame })
         }
+    }
+
+    @Test("with a dial preparation, each dial waits for it and carries its headers over the static ones")
+    func preparedHeadersOnEveryDial() async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(
+            headers: ["x-bb-connect-machine": "cred-test", "Cookie": "static"],
+            prepareDial: { @MainActor [preparer] in try await preparer.prepare() }
+        )
+        h.session.start()
+        await settle(until: { preparer.waiting == 1 })
+        #expect(h.factory.transports.isEmpty, "no dial before the preparation answers")
+        #expect(h.log.statuses == [.connecting])
+        preparer.answer(["Cookie": "session=one"])
+        await settle(until: { h.factory.transports.count == 1 })
+        let first = try h.transport(0)
+        #expect(first.request.headers == ["x-bb-connect-machine": "cred-test", "Cookie": "session=one"])
+        #expect(first.request.url.absoluteString == "ws://127.0.0.1:38886/ws")
+        #expect(first.connectCalls == 1)
+
+        // A reconnect prepares again: nothing from the last dial is reused.
+        first.simulateClose()
+        await settle()
+        await h.clock.advance(by: .seconds(1))
+        await settle(until: { preparer.waiting == 1 })
+        #expect(preparer.calls == 2)
+        #expect(h.factory.transports.count == 1)
+        preparer.answer(["Cookie": "session=two"])
+        await settle(until: { h.factory.transports.count == 2 })
+        #expect(try h.transport(1).request.headers == ["x-bb-connect-machine": "cred-test", "Cookie": "session=two"])
+        h.session.stop()
+    }
+
+    @Test("a failed preparation is named as it is, and retried after the backoff")
+    func failedPreparationIsNamedAndRetried() async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(prepareDial: { @MainActor [preparer] in try await preparer.prepare() })
+        h.session.start()
+        await settle(until: { preparer.waiting == 1 })
+        preparer.fail(PrepareFailure(message: "could not start a session"))
+        await settle(until: { h.log.errors.count == 1 })
+        #expect(h.log.errors == ["could not start a session"])
+        #expect(h.log.statuses == [.connecting, .reconnecting])
+        #expect(h.factory.transports.isEmpty)
+
+        await h.clock.advance(by: .milliseconds(999))
+        await settle()
+        #expect(preparer.calls == 1, "not before the backoff")
+        await h.clock.advance(by: .milliseconds(1))
+        await settle(until: { preparer.waiting == 1 })
+        #expect(preparer.calls == 2)
+        preparer.fail(PrepareFailure(message: "again"))
+        await settle(until: { h.log.errors.count == 2 })
+        await h.clock.advance(by: .milliseconds(1499))
+        await settle()
+        #expect(preparer.calls == 2, "the backoff grows")
+        await h.clock.advance(by: .milliseconds(1))
+        await settle(until: { preparer.waiting == 1 })
+        preparer.answer([:])
+        await settle(until: { h.factory.transports.count == 1 })
+        try h.transport(0).simulateOpen()
+        await settle(until: { h.log.statuses.last == .connected })
+        #expect(h.log.errors.last == .some(nil))
+        h.session.stop()
+    }
+
+    @Test("a preparation that answers after stop dials nothing and reports nothing")
+    func preparationAfterStopIsDropped() async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(prepareDial: { @MainActor [preparer] in try await preparer.prepare() })
+        h.session.start()
+        await settle(until: { preparer.waiting == 1 })
+        h.session.stop()
+        let events = h.log.events
+        preparer.answer(["Cookie": "session=late"])
+        await settle()
+        #expect(h.factory.transports.isEmpty)
+        #expect(h.log.events == events)
+
+        #expect(preparer.waiting == 0)
+
+        // A start after stop prepares afresh, and an answer to the stopped
+        // session's preparation that lands while the new one waits is not
+        // used either.
+        let stale = FakePreparer()
+        let again = try Harness(prepareDial: { @MainActor [stale] in try await stale.prepare() })
+        again.session.start()
+        await settle(until: { stale.waiting == 1 })
+        again.session.stop()
+        again.session.start()
+        await settle(until: { stale.waiting == 2 })
+        stale.answer(["Cookie": "session=stale"])
+        await settle()
+        #expect(again.factory.transports.isEmpty, "the stopped dial's answer was used")
+        stale.answer(["Cookie": "session=fresh"])
+        await settle(until: { again.factory.transports.count == 1 })
+        #expect(try again.transport(0).request.headers == ["Cookie": "session=fresh"])
+        again.session.stop()
+    }
+
+    @Test("a failure that quotes a dial header's value is reported without it")
+    func failureTextIsScrubbedOfHeaderValues() async throws {
+        let preparer = FakePreparer()
+        let h = try Harness(
+            headers: ["x-bb-connect-machine": "cred-test"],
+            prepareDial: { @MainActor [preparer] in try await preparer.prepare() }
+        )
+        h.session.start()
+        await settle(until: { preparer.waiting == 1 })
+        preparer.answer(["Cookie": "__Secure-bb-connect.desktop_session=cookie-test"])
+        await settle(until: { h.factory.transports.count == 1 })
+        var dumped = ""
+        dump(h.session, to: &dumped)
+        #expect(!dumped.contains("cookie-test"))
+        #expect(!dumped.contains("cred-test"))
+        try h.transport(0).simulateClose(code: 1008, reason: "bad cookie-test for cred-test")
+        #expect(h.log.errors == ["bb live updates: bad <redacted> for <redacted> (code 1008)"])
+
+        await h.clock.advance(by: .seconds(1))
+        await settle(until: { preparer.waiting == 1 })
+        preparer.fail(PrepareFailure(message: "refused cred-test"))
+        await settle(until: { h.log.errors.count == 2 })
+        #expect(h.log.errors.last == "refused <redacted>")
+        h.session.stop()
     }
 
     @Test("describing or dumping the session or its request names header fields, never their values")

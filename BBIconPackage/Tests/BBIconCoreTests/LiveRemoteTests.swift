@@ -32,4 +32,37 @@ struct LiveRemoteTests {
         #expect(snapshot.decodeFailures.isEmpty)
         #expect(!snapshot.truncated)
     }
+
+    /// The relay refuses the machine header on a WebSocket upgrade; this is
+    /// the path the tray takes instead: a desktop session minted just before
+    /// the dial, sent as a cookie. A failure's text is the transport's, which
+    /// never carries a header value.
+    @Test("the paired remote bb's /ws opens with a freshly minted session", .enabled(if: enabled))
+    @MainActor
+    func liveRemoteSocketOpens() async throws {
+        guard let pairing = try KeychainPairingStore().load() else {
+            Issue.record("No bb Connect pairing is stored. Pair from the menu first.")
+            return
+        }
+        let http = URLSessionHTTPClient()
+        let session: [String: String]
+        do throws(ConnectSessionError) {
+            session = try await ConnectSession.dialHeaders(pairing: pairing, http: http)
+        } catch {
+            Issue.record("\(error.message)")
+            return
+        }
+        let headers = [ConnectHealth.credentialHeader: pairing.credential].merging(session) { _, minted in minted }
+        let transport = URLSessionWebSocketTransport(
+            request: TransportRequest(url: RealtimeSession.websocketURL(for: pairing.serverURL), headers: headers)
+        )
+        var opened = false
+        var failure: String?
+        transport.onOpen = { opened = true }
+        transport.onError = { if failure == nil { failure = $0 } }
+        transport.connect()
+        defer { transport.close(code: 1000, reason: "live test") }
+        await eventually(timeout: .seconds(20)) { opened || failure != nil }
+        #expect(opened, "\(failure ?? "no answer in 20 s")")
+    }
 }

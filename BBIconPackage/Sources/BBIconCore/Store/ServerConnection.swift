@@ -6,8 +6,10 @@ enum ServerTarget: Equatable {
     /// This Mac's own bb, from the runtime file. Loopback, no headers.
     case local(URL)
     /// The paired remote bb, through the getbb.app relay, which accepts the
-    /// pairing's credential in `x-bb-connect-machine`. A new pairing is a new
-    /// target even at the same address: its credential is what is sent.
+    /// pairing's credential in `x-bb-connect-machine` on HTTP requests, and a
+    /// desktop session cookie minted with it on the `/ws` upgrade. A new
+    /// pairing is a new target even at the same address: its credential is
+    /// what is sent.
     case remote(Pairing)
 
     var url: URL {
@@ -21,6 +23,16 @@ enum ServerTarget: Equatable {
         switch self {
         case .local: [:]
         case .remote(let pairing): [ConnectHealth.credentialHeader: pairing.credential]
+        }
+    }
+
+    /// What each `/ws` dial must ask for first: nothing for this Mac's bb; a
+    /// fresh desktop session for a remote one, since the relay refuses the
+    /// machine header on an upgrade (see `ConnectSession`).
+    func prepareDial(http: any HTTPClient) -> RealtimeSession.DialPreparation? {
+        switch self {
+        case .local: nil
+        case .remote(let pairing): { try await ConnectSession.dialHeaders(pairing: pairing, http: http) }
         }
     }
 
@@ -227,6 +239,7 @@ public final class ServerConnection {
         let session = RealtimeSession(
             serverURL: target.url,
             headers: target.headers,
+            prepareDial: target.prepareDial(http: http),
             makeTransport: makeTransport,
             fetch: { try await api.fetchSnapshot() },
             onStatus: { [weak self] in self?.sessionReported($0) },

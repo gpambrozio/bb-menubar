@@ -14,7 +14,9 @@ struct ServerConnectionTests {
     /// gate is then gone: `AsyncGate` releases one waiter, so the requests
     /// after it go straight through. A refused server answers every `/api/v1`
     /// request 401. `/api/connect/servers` answers what `setHealth` says, and
-    /// 404 until it says anything.
+    /// 404 until it says anything. `/api/connect/desktop-session` answers a
+    /// valid session cookie, `session-test-<n>` for the n-th ask, unless
+    /// `setSession` says otherwise; a refused server does not refuse it.
     ///
     /// A class under a lock rather than an actor, so `eventually` can read
     /// what was asked and answered without awaiting.
@@ -24,6 +26,8 @@ struct ServerConnectionTests {
         private var delivered: [String: Int] = [:]
         private var refused: Set<String> = []
         private var health: [String: (status: Int, body: String)] = [:]
+        private var sessions: [String: (status: Int, body: String)] = [:]
+        private var sessionsMinted = 0
         private var askedKeys: [String] = []
         private var answeredKeys: [String] = []
         private var askedHeaders: [(key: String, headers: [String: String])] = []
@@ -69,6 +73,17 @@ struct ServerConnectionTests {
             lock.withLock { health[server] = (status, body) }
         }
 
+        func setSession(_ server: String, status: Int, body: String) {
+            lock.withLock { sessions[server] = (status, body) }
+        }
+
+        /// How many desktop sessions were asked for.
+        var sessionAsks: Int { asked.filter { $0.hasSuffix(" /api/connect/desktop-session") }.count }
+
+        static func sessionBody(_ value: String) -> String {
+            #"{"cookie":{"domain":".getbb.app","expiresAt":1,"name":"__Secure-bb-connect.desktop_session","value":"\#(value)"}}"#
+        }
+
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
             guard let url = request.url else { throw URLError(.badURL) }
             let server = Self.server(url)
@@ -87,6 +102,10 @@ struct ServerConnectionTests {
             let (status, body) = lock.withLock { () -> (Int, String) in
                 answeredKeys.append(key)
                 if path == "/api/connect/servers" { return health[server] ?? (404, "") }
+                if path == "/api/connect/desktop-session" {
+                    sessionsMinted += 1
+                    return sessions[server] ?? (200, Self.sessionBody("session-test-\(sessionsMinted)"))
+                }
                 if refused.contains(server) { return (401, "") }
                 switch path {
                 case "/api/v1/projects":
@@ -145,12 +164,19 @@ struct ServerConnectionTests {
             )
         }
 
+        /// The `index`-th transport, once it has been made. A remote dial
+        /// waits for its desktop session, which answers on another thread.
+        func dialled(_ index: Int) async throws -> FakeTransport {
+            await eventually { factory.transports.count > index }
+            return try transport(index)
+        }
+
         /// Pairs, finds no local bb, opens the socket the pairing's server is
         /// dialled on, and waits for its rows.
         func connectRemote() async throws -> FakeTransport {
             connection.setPairing(try pairing())
             connection.apply(.notRunning(error: nil))
-            let transport = try #require(factory.last)
+            let transport = try await dialled(0)
             transport.simulateOpen()
             await eventually { store.state.status == .connected }
             try #require(store.state.status == .connected)
@@ -420,7 +446,7 @@ struct ServerConnectionTests {
 
         h.connection.apply(.notRunning(error: nil))
         #expect(local.closedWith?.code == 1000)
-        let remote = try h.transport(1)
+        let remote = try await h.dialled(1)
         #expect(remote.request.url.absoluteString == "wss://\(Self.remote)/ws")
         #expect(h.connection.serverURL?.host == Self.remote)
         #expect(h.store.state.status == .connecting)
@@ -456,7 +482,9 @@ struct ServerConnectionTests {
 
         h.connection.setPairing(try h.pairing(credential: "cred-other"))
         #expect(remote.closedWith?.code == 1000)
-        #expect(try h.transport(1).request.headers == [Self.credentialHeader: "cred-other"])
+        #expect(try await h.dialled(1).request.headers == [
+            Self.credentialHeader: "cred-other", "Cookie": "__Secure-bb-connect.desktop_session=session-test-2",
+        ])
     }
 
     @Test("only a remote bb's requests carry the credential, and none carries an Origin")
@@ -466,18 +494,23 @@ struct ServerConnectionTests {
         await h.connection.openThread("thr_\(Self.portA)", prepare: { true }).value
         h.connection.apply(.notRunning(error: nil))
         h.connection.setPairing(try h.pairing())
-        try h.transport(1).simulateOpen()
+        try await h.dialled(1).simulateOpen()
         await eventually { h.store.state.status == .connected }
         try #require(h.threadIds == ["thr_\(Self.remote)"])
         await h.connection.openThread("thr_\(Self.remote)", prepare: { true }).value
 
         #expect(try h.transport(0).request.headers.isEmpty)
-        #expect(try h.transport(1).request.headers == [Self.credentialHeader: Self.credential])
+        #expect(try h.transport(1).request.headers == [
+            Self.credentialHeader: Self.credential, "Cookie": "__Secure-bb-connect.desktop_session=session-test-1",
+        ])
         let local = h.http.headers.filter { $0.key.hasPrefix("\(Self.portA) ") }
         let remote = h.http.headers.filter { $0.key.hasPrefix("\(Self.remote) ") }
         #expect(local.map(\.key).contains("\(Self.portA) /api/v1/threads/thr_\(Self.portA)/open"))
         #expect(remote.map(\.key).contains("\(Self.remote) /api/v1/threads/thr_\(Self.remote)/open"))
         #expect(remote.map(\.key).contains("\(Self.remote) /api/v1/projects"))
+        #expect(remote.map(\.key).contains("\(Self.remote) /api/connect/desktop-session"))
+        #expect(!local.map(\.key).contains { $0.hasSuffix("/api/connect/desktop-session") }, "a local bb needs no session")
+        #expect(h.http.headers.allSatisfy { $0.headers["Cookie"] == nil }, "the session cookie rides on the upgrade only")
         #expect(local.allSatisfy { $0.headers[Self.credentialHeader] == nil })
         #expect(remote.allSatisfy { $0.headers[Self.credentialHeader] == Self.credential })
         #expect(h.http.headers.allSatisfy { !$0.headers.keys.contains { $0.lowercased() == "origin" } })
@@ -491,8 +524,8 @@ struct ServerConnectionTests {
         h.http.setHealth(Self.remote, status: 200, body: Self.liveBody)
         h.connection.setPairing(try h.pairing())
         h.connection.apply(.notRunning(error: nil))
-        try h.transport(0).simulateClose(code: 1008, reason: "refused \(Self.credential)")
-        let expected = "bb live updates: refused \(Pairing.redacted) (code 1008)"
+        try await h.dialled(0).simulateClose(code: 1008, reason: "refused \(Self.credential) session-test-1")
+        let expected = "bb live updates: refused \(Pairing.redacted) \(Pairing.redacted) (code 1008)"
         await eventually {
             h.store.state.errors == [expected] && h.http.answered.contains("\(Self.remote) /api/connect/servers")
         }
@@ -524,6 +557,7 @@ struct ServerConnectionTests {
         )
         connection.setPairing(try Harness().pairing())
         connection.apply(.notRunning(error: nil))
+        await eventually { !factory.transports.isEmpty }
         try #require(factory.last).simulateOpen()
         await eventually { store.state.status == .connected }
         await connection.openThread("thr_\(Self.remote)", prepare: { true }).value
@@ -549,7 +583,7 @@ struct ServerConnectionTests {
         h.http.setHealth(Self.remote, status: status, body: body)
         h.connection.setPairing(try h.pairing())
         h.connection.apply(.notRunning(error: nil))
-        try h.transport(0).simulateOpen()
+        try await h.dialled(0).simulateOpen()
         let expected = finding.message(handle: Self.handle) ?? BBAPIError.authenticationRequired.message
         await eventually { h.store.state.errors == [expected] && h.http.answered.contains("\(Self.remote) /api/connect/servers") }
         #expect(h.store.state.errors == [expected])
@@ -557,6 +591,53 @@ struct ServerConnectionTests {
         #expect(h.http.probes == 1, "one failure, one probe")
         let probe = h.http.headers.first { $0.key == "\(Self.remote) /api/connect/servers" }
         #expect(probe?.headers[Self.credentialHeader] == Self.credential)
+    }
+
+    @Test(
+        "a session the relay will not start is named, and nothing is dialled",
+        arguments: [
+            (401, #"{"error":"unauthorized"}"#, 401, "", ConnectSessionError.revoked(handle: "mini").message),
+            (503, "", 200, liveBody, ConnectSessionError.failed("HTTP 503").message),
+        ]
+    )
+    func refusedSessionIsNamed(_ status: Int, _ body: String, _ healthStatus: Int, _ health: String, _ expected: String) async throws {
+        let h = Harness()
+        h.http.setSession(Self.remote, status: status, body: body)
+        h.http.setHealth(Self.remote, status: healthStatus, body: health)
+        h.connection.setPairing(try h.pairing())
+        h.connection.apply(.notRunning(error: nil))
+        await eventually { h.store.state.errors == [expected] && h.http.answered.contains("\(Self.remote) /api/connect/servers") }
+        #expect(h.store.state.errors == [expected])
+        #expect(h.store.state.status == .reconnecting)
+        #expect(h.factory.transports.isEmpty)
+        #expect(h.http.sessionAsks == 1)
+
+        // The next attempt asks again, after the backoff.
+        await settle()
+        await h.clock.advance(by: RealtimeSession.initialBackoff)
+        await eventually { h.http.sessionAsks == 2 }
+        #expect(h.http.sessionAsks == 2)
+        #expect(h.factory.transports.isEmpty)
+    }
+
+    @Test("every remote dial mints its own session; a local bb never asks for one")
+    func sessionPerRemoteDial() async throws {
+        let h = Harness()
+        let remote = try await h.connectRemote()
+        #expect(remote.request.headers["Cookie"] == "__Secure-bb-connect.desktop_session=session-test-1")
+        let mint = try #require(h.http.headers.first { $0.key == "\(Self.remote) /api/connect/desktop-session" })
+        #expect(mint.headers[Self.credentialHeader] == Self.credential)
+
+        remote.simulateClose()
+        await settle()
+        await h.clock.advance(by: RealtimeSession.initialBackoff)
+        let second = try await h.dialled(1)
+        #expect(second.request.headers["Cookie"] == "__Secure-bb-connect.desktop_session=session-test-2")
+        #expect(second.request.headers[Self.credentialHeader] == Self.credential)
+
+        h.connection.apply(try h.running(Self.portA))
+        #expect(try h.transport(2).request.headers.isEmpty, "a local dial is made at once, with no session")
+        #expect(h.http.sessionAsks == 2)
     }
 
     @Test("an unreachable relay is named as the probe names it")
@@ -569,7 +650,7 @@ struct ServerConnectionTests {
         let expected = try #require(await ConnectHealth.probe(pairing: pairing, http: reference).message(handle: Self.handle))
         h.connection.setPairing(pairing)
         h.connection.apply(.notRunning(error: nil))
-        try h.transport(0).simulateOpen()
+        try await h.dialled(0).simulateOpen()
         await eventually { h.store.state.errors == [expected] }
         #expect(h.store.state.errors == [expected])
     }
@@ -589,7 +670,7 @@ struct ServerConnectionTests {
         // the new probe answers, and then says what the relay says now.
         h.http.setHealth(Self.remote, status: 401, body: "")
         await h.clock.advance(by: RealtimeSession.initialBackoff)
-        await settle(until: { h.factory.transports.count == 2 })
+        await eventually { h.factory.transports.count == 2 }
         try h.transport(1).simulateClose()
         let revoked = try #require(ConnectHealthFinding.revoked.message(handle: Self.handle))
         await eventually { h.store.state.errors == [revoked] }
@@ -608,7 +689,7 @@ struct ServerConnectionTests {
         try #require(h.store.state.errors == [offline])
 
         await h.clock.advance(by: RealtimeSession.initialBackoff)
-        await settle(until: { h.factory.transports.count == 2 })
+        await eventually { h.factory.transports.count == 2 }
         try h.transport(1).simulateOpen()
         await eventually { h.store.state.status == .connected }
         #expect(h.store.state.status == .connected)
@@ -625,7 +706,7 @@ struct ServerConnectionTests {
         await eventually { h.http.probes == 1 }
         for index in 1...3 {
             await h.clock.advance(by: .seconds(30))
-            await settle(until: { h.factory.transports.count == index + 1 })
+            await eventually { h.factory.transports.count == index + 1 }
             try h.transport(index).simulateError("refused")
         }
         #expect(h.factory.transports.count == 4)
@@ -644,7 +725,7 @@ struct ServerConnectionTests {
         let gate = h.http.hold(Self.remote, path: "/api/connect/servers")
         h.connection.setPairing(try h.pairing())
         h.connection.apply(.notRunning(error: nil))
-        try h.transport(0).simulateOpen()
+        try await h.dialled(0).simulateOpen()
         await eventually { h.http.probes == 1 }
         try #require(h.http.probes == 1)
 
@@ -666,12 +747,12 @@ struct ServerConnectionTests {
         let gate = h.http.hold(Self.remote, path: "/api/connect/servers")
         h.connection.setPairing(try h.pairing())
         h.connection.apply(.notRunning(error: nil))
-        try h.transport(0).simulateOpen()
+        try await h.dialled(0).simulateOpen()
         await eventually { h.http.probes == 1 }
 
         h.http.unrefuse(Self.remote)
         await h.clock.advance(by: RealtimeSession.initialBackoff)
-        await settle(until: { h.factory.transports.count == 2 })
+        await eventually { h.factory.transports.count == 2 }
         try h.transport(1).simulateOpen()
         await eventually { h.store.state.status == .connected }
         try #require(h.store.state.status == .connected)
@@ -693,7 +774,7 @@ struct ServerConnectionTests {
         transport.simulateOpen()
         await eventually { h.store.state.status == .reconnecting }
         await h.clock.advance(by: RealtimeSession.initialBackoff)
-        await settle(until: { h.factory.transports.count == 2 })
+        await eventually { h.factory.transports.count == 2 }
         try h.transport(1).simulateClose()
         await settle()
         #expect(h.store.state.errors == ["bb live updates: the connection closed before it opened (code 1006)"])

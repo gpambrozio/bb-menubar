@@ -15,6 +15,9 @@ public protocol HTTPClient: Sendable {
 /// trickles its answer could hold one request open indefinitely. The
 /// resource timeout bounds each request as a whole at 30 s.
 ///
+/// Cookies are neither stored nor sent: every request carries exactly the
+/// headers its caller set.
+///
 /// Redirects are never followed. bb's API does not redirect, and a followed
 /// redirect carries the request's headers — a remote bb's
 /// `x-bb-connect-machine` credential among them — to whatever host the
@@ -37,6 +40,12 @@ public struct URLSessionHTTPClient: HTTPClient {
         configuration.timeoutIntervalForRequest = 10
         configuration.timeoutIntervalForResource = 30
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        // No cookie store. The relay's desktop session is minted over this
+        // client and belongs on one `/ws` upgrade only; a `Set-Cookie` that
+        // came with it must not be kept and replayed on every later request.
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
         return configuration
     }
 

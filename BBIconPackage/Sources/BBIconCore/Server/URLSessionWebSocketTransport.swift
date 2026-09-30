@@ -1,9 +1,10 @@
 import Foundation
 
 /// `WebSocketTransport` over `URLSessionWebSocketTask`. Ported from
-/// paseo-menubar unchanged but for the protocol's name. A local bb's `/ws`
-/// needs no headers; a remote one's upgrade carries the relay credential in
-/// the request's headers. bb's `/ws` needs no subprotocols; the request still
+/// paseo-menubar unchanged but for the protocol's name and its handling of
+/// cookies. A local bb's `/ws` needs no headers; a remote one's upgrade
+/// carries the relay's session cookie (and the machine credential) in the
+/// request's headers. bb's `/ws` needs no subprotocols; the request still
 /// carries them so the port stays a port.
 @MainActor
 public final class URLSessionWebSocketTransport: WebSocketTransport {
@@ -49,13 +50,7 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         // cancellation would surface through the new transport's `onError`.
         sendTail = Task {}
 
-        var urlRequest = URLRequest(url: request.url)
-        for (name, value) in request.headers {
-            urlRequest.setValue(value, forHTTPHeaderField: name)
-        }
-        if !request.subprotocols.isEmpty {
-            urlRequest.setValue(request.subprotocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
-        }
+        let urlRequest = Self.urlRequest(for: request)
         let generation = self.generation
         let delegate = Delegate(
             onOpen: { [weak self] in
@@ -65,7 +60,7 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
                 Task { @MainActor in self?.finish(code: code, reason: reason, generation: generation) }
             }
         )
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        let session = URLSession(configuration: Self.sessionConfiguration(), delegate: delegate, delegateQueue: nil)
         let task = session.webSocketTask(with: urlRequest)
         self.session = session
         self.task = task
@@ -73,6 +68,33 @@ public final class URLSessionWebSocketTransport: WebSocketTransport {
         receiveTask = Task { [weak self] in
             await self?.receiveLoop(task)
         }
+    }
+
+    /// The upgrade request: the target's headers exactly as given. A remote
+    /// bb's carry a `Cookie` header, the relay's desktop session, which
+    /// `URLSession` would otherwise be free to replace with cookies from its
+    /// store; `httpShouldHandleCookies = false` keeps the one set here.
+    static func urlRequest(for request: TransportRequest) -> URLRequest {
+        var urlRequest = URLRequest(url: request.url)
+        urlRequest.httpShouldHandleCookies = false
+        for (name, value) in request.headers {
+            urlRequest.setValue(value, forHTTPHeaderField: name)
+        }
+        if !request.subprotocols.isEmpty {
+            urlRequest.setValue(request.subprotocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        }
+        return urlRequest
+    }
+
+    /// Ephemeral, and with no cookie store at all: the only cookie an upgrade
+    /// carries is the one its request names, and none it is answered with is
+    /// kept, so no session outlives the dial it was minted for.
+    static func sessionConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        return configuration
     }
 
     /// Frames go out in the order they were handed over. `URLSessionWebSocketTask.send`

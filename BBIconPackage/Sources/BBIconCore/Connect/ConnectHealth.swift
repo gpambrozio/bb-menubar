@@ -22,7 +22,7 @@ public enum ConnectHealthFinding: Equatable, Sendable {
     public func message(handle: String) -> String? {
         switch self {
         case .revoked:
-            "bb Connect no longer accepts bb Icon's pairing with \(handle). Pair again, or forget it."
+            Self.revokedMessage(handle: handle)
         case .offline:
             "\(handle) is offline — the Mac running it may be asleep or bb may be closed there."
         case .unreachable(let detail):
@@ -32,6 +32,12 @@ public enum ConnectHealthFinding: Equatable, Sendable {
         case .live:
             nil
         }
+    }
+
+    /// `.revoked`'s row. Also what a refused desktop session says
+    /// (`ConnectSession`), since the relay refuses it for the same reason.
+    public static func revokedMessage(handle: String) -> String {
+        "bb Connect no longer accepts bb Icon's pairing with \(handle). Pair again, or forget it."
     }
 }
 
@@ -119,10 +125,15 @@ public enum ConnectHealth {
         }
     }
 
-    /// The server's origin plus the probe's path. `Pairing` already refuses a
-    /// server URL that is not `https://<label>.getbb.app`; taking only the
-    /// origin here means nothing else in one could move the request.
     static func serversURL(_ serverURL: URL) -> URL? {
+        relayURL(serverURL, path: path)
+    }
+
+    /// The server's origin plus `path`, for the relay's own endpoints.
+    /// `Pairing` already refuses a server URL that is not
+    /// `https://<label>.getbb.app`; taking only the origin here means nothing
+    /// else in one could move the request.
+    static func relayURL(_ serverURL: URL, path: String) -> URL? {
         guard let source = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else { return nil }
         var components = URLComponents()
         components.scheme = source.scheme

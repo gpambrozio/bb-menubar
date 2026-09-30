@@ -31,6 +31,17 @@ import Foundation
 /// since that is what a moved or refused `/ws` looks like; one lost after it
 /// opened is a bb restart, and only reports `reconnecting`.
 ///
+/// A target may need headers that cannot be fixed in advance: a remote bb's
+/// `/ws` upgrade needs a session cookie minted just before it (see
+/// `ConnectSession`). `prepareDial`, when given, runs before every dial and
+/// its headers are merged over the static ones. Its failure is a dial that
+/// failed before it opened: named through `onError` as it is (its text is
+/// already a sentence), then the same reconnect backoff. A local target
+/// passes none, and dials at once.
+///
+/// Failure text reaches `onError` without any value of the dial's headers in
+/// it, since a close reason or transport error could echo one.
+///
 /// Every callback fires on the main actor, and a callback may call `stop()`:
 /// nothing further is delivered once it has. Timers use the injected clock.
 ///
@@ -72,8 +83,16 @@ public final class RealtimeSession {
         #"{"type":"subscribe","target":{"kind":"project-list"}}"#,
     ]
 
-    /// The `/ws` URL and the target's headers, the same for every dial.
-    private let transportRequest: TransportRequest
+    /// Extra headers for one dial, asked for before each. Must finish in
+    /// bounded time; production's is one `URLSessionHTTPClient` request.
+    public typealias DialPreparation = @Sendable () async throws -> [String: String]
+
+    /// The `/ws` URL and the target's headers, the same for every dial. Kept
+    /// as a `TransportRequest`, whose description and mirror name header
+    /// fields and never their values, so a dump of the session does not
+    /// carry the credential.
+    private let baseRequest: TransportRequest
+    private let prepareDial: DialPreparation?
     private let makeTransport: TransportFactory
     /// Must finish, with a value or an error, in bounded time: while it runs,
     /// every invalidation only marks the session `dirty`, so a fetch that
@@ -110,13 +129,23 @@ public final class RealtimeSession {
     /// timer starts it when it fires.
     private var intervalTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    /// The `prepareDial` call in flight, if any.
+    private var prepareTask: Task<Void, Never>?
+    /// Numbers each `prepareDial` call, so an answer that `stop()` or a newer
+    /// dial has overtaken is dropped.
+    private var dialAttempt = 0
+    /// The current dial's request, whose header values are scrubbed from any
+    /// failure text before it is reported.
+    private var dialRequest: TransportRequest
 
     /// `headers` ride on every `/ws` upgrade, as `BBAPI`'s ride on every
     /// request: none for this Mac's own bb, the relay's credential for a
-    /// remote one. No `Origin` is added here.
+    /// remote one. No `Origin` is added here. `prepareDial`'s headers ride
+    /// on the one dial they were prepared for, over `headers`.
     public init(
         serverURL: URL,
         headers: [String: String] = [:],
+        prepareDial: DialPreparation? = nil,
         makeTransport: @escaping TransportFactory,
         fetch: @escaping @Sendable () async throws -> BBSnapshot,
         onStatus: @escaping (ConnectionStatus) -> Void,
@@ -126,7 +155,9 @@ public final class RealtimeSession {
         debounce: Duration = .milliseconds(250),
         minFetchInterval: Duration = .seconds(1)
     ) {
-        self.transportRequest = TransportRequest(url: Self.websocketURL(for: serverURL), headers: headers)
+        self.baseRequest = TransportRequest(url: Self.websocketURL(for: serverURL), headers: headers)
+        self.dialRequest = baseRequest
+        self.prepareDial = prepareDial
         self.makeTransport = makeTransport
         self.fetch = fetch
         self.onStatus = onStatus
@@ -159,16 +190,62 @@ public final class RealtimeSession {
         resetConnectionState()
         reconnectTask?.cancel()
         reconnectTask = nil
+        cancelPreparation()
         disposeTransport(code: 1000, reason: "Client closed")
     }
 
     // MARK: - Connecting
 
+    /// Dials at once, or once `prepareDial` has answered.
     private func connect() {
         reconnectTask = nil
         // Only ever one socket: never leave one open behind a new one.
         disposeTransport(code: 1001, reason: "Reconnecting")
-        let transport = makeTransport(transportRequest)
+        cancelPreparation()
+        dialRequest = baseRequest
+        guard let prepareDial else {
+            dial(extraHeaders: [:])
+            return
+        }
+        let attempt = dialAttempt
+        prepareTask = Task { @MainActor [weak self] in
+            let result: Result<[String: String], any Error>
+            do {
+                result = .success(try await prepareDial())
+            } catch {
+                result = .failure(error)
+            }
+            self?.finishPreparing(result, attempt: attempt)
+        }
+    }
+
+    /// Drops any `prepareDial` call in flight; its answer will be ignored.
+    private func cancelPreparation() {
+        dialAttempt += 1
+        prepareTask?.cancel()
+        prepareTask = nil
+    }
+
+    private func finishPreparing(_ result: Result<[String: String], any Error>, attempt: Int) {
+        guard running, attempt == dialAttempt else { return }
+        prepareTask = nil
+        switch result {
+        case .success(let extraHeaders):
+            dial(extraHeaders: extraHeaders)
+        case .failure(let error):
+            let text = scrubbed(errorText(error))
+            connectionLost()
+            guard running else { return }
+            onError(text)
+        }
+    }
+
+    private func dial(extraHeaders: [String: String]) {
+        dialRequest = TransportRequest(
+            url: baseRequest.url,
+            headers: baseRequest.headers.merging(extraHeaders) { _, prepared in prepared }
+        )
+        let transport = makeTransport(dialRequest)
         self.transport = transport
         transport.onOpen = { [weak self, weak transport] in
             guard let self, self.isCurrent(transport) else { return }
@@ -214,9 +291,15 @@ public final class RealtimeSession {
     /// is named; after, it is a restart, and `reconnecting` says enough.
     private func transportFailed(_ reason: String) {
         let wasOpen = isOpen
+        let text = scrubbed("bb live updates: " + reason)
         connectionLost()
         guard !wasOpen, running else { return }
-        onError("bb live updates: " + reason)
+        onError(text)
+    }
+
+    /// `text` without any value of the current dial's headers in it.
+    private func scrubbed(_ text: String) -> String {
+        scrubbingHeaderValues(dialRequest.headers, from: text)
     }
 
     static func describe(_ close: TransportClose) -> String {

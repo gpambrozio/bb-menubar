@@ -51,6 +51,26 @@ func redactedHeaderNames(_ headers: [String: String]) -> [String] {
     headers.keys.sorted()
 }
 
+/// `text` with every header value in `headers` replaced, and, for a `Cookie`
+/// header, each cookie's value on its own too: a server or transport that
+/// echoes a cookie back may quote only its value. Longest first, so a value
+/// that contains another is replaced whole.
+func scrubbingHeaderValues(_ headers: [String: String], from text: String) -> String {
+    var secrets: Set<String> = []
+    for (name, value) in headers {
+        secrets.insert(value)
+        guard name.caseInsensitiveCompare("Cookie") == .orderedSame else { continue }
+        for pair in value.split(separator: ";") {
+            guard let equals = pair.firstIndex(of: "=") else { continue }
+            secrets.insert(pair[pair.index(after: equals)...].trimmingCharacters(in: .whitespaces))
+        }
+    }
+    return secrets
+        .filter { !$0.isEmpty }
+        .sorted { $0.count > $1.count }
+        .reduce(text) { $0.replacingOccurrences(of: $1, with: Pairing.redacted) }
+}
+
 /// One WebSocket-shaped connection. `URLSessionWebSocketTransport` is the real
 /// one; tests drive a fake. Every callback fires on the main actor.
 ///
