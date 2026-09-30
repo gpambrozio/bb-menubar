@@ -103,15 +103,18 @@ final class AppCoordinator {
     // MARK: - Menu actions
 
     /// Brings bb forward, then asks it to show the thread. The request is
-    /// what navigates; activating is what makes the navigation visible.
+    /// what navigates; activating is what makes the navigation visible, so it
+    /// is awaited first, and a bb that could not be opened gets no request.
     func openThread(_ row: TrayThreadRow) {
-        activateBB()
-        // No server known: bb is not running or not connected yet, so all a
-        // click can do is bring bb up.
-        guard let api else { return }
         openClicks += 1
         let click = openClicks
         Task { [weak self] in
+            guard let self, await self.activateBB() else { return }
+            // A later click, or the server going away (`stopRealtime` bumps
+            // the counter too), supersedes this one. No server known means bb
+            // is not running or not connected yet, so all a click can do is
+            // bring bb up.
+            guard click == self.openClicks, let api = self.api else { return }
             let failure: String?
             do {
                 try await api.openThread(row.threadId)
@@ -119,30 +122,36 @@ final class AppCoordinator {
             } catch {
                 failure = errorText(error)
             }
-            guard let self, click == self.openClicks else { return }
+            guard click == self.openClicks else { return }
             self.store.setError(.open, failure)
         }
     }
 
     /// Activates bb, launching it when it is not running.
     func openApp() {
-        activateBB()
+        Task { [weak self] in _ = await self?.activateBB() }
     }
 
     func showError(_ detail: String) {
-        let alert = NSAlert()
-        alert.messageText = "bb Icon — error"
-        alert.informativeText = detail
-        alert.addButton(withTitle: "Open bb")
-        alert.addButton(withTitle: "Close")
-        NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn { openApp() }
+        report(title: "bb Icon — error", detail: detail, action: AlertAction(title: "Open bb") { [weak self] in
+            self?.openApp()
+        })
     }
 
     func setLoginItem(_ enabled: Bool) {
         do {
             if enabled {
                 try SMAppService.mainApp.register()
+                // Registering can succeed and still leave the item off until
+                // the user approves it, which from the checkbox looks like a
+                // click that did nothing.
+                if SMAppService.mainApp.status == .requiresApproval {
+                    report(
+                        title: "bb Icon — the login item needs your approval",
+                        detail: "Allow bb Icon in System Settings › General › Login Items to start it at login.",
+                        action: AlertAction(title: "Open System Settings") { SMAppService.openSystemSettingsLoginItems() }
+                    )
+                }
             } else {
                 try SMAppService.mainApp.unregister()
             }
@@ -198,16 +207,20 @@ final class AppCoordinator {
         session.start()
     }
 
-    /// Stops and drops the realtime session. Its `.fetch` error goes with it:
-    /// that row describes a connection that no longer exists, and the next
-    /// session sets it again if the new server fails the same way.
+    /// Stops and drops the realtime session. Its `.fetch` and `.open` errors
+    /// go with it: those rows describe a server that is no longer the one in
+    /// use, and the next session sets them again if the new server fails the
+    /// same way. Bumping `openClicks` drops the answer of an open request
+    /// still in flight to the old server, so it cannot write `.open` later.
     private func stopRealtime() {
         guard let session = realtime else { return }
         session.stop()
         realtime = nil
         api = nil
         serverURL = nil
+        openClicks += 1
         store.setError(.fetch, nil)
+        store.setError(.open, nil)
     }
 
     /// bb.app launching or quitting is when its runtime file becomes true or
@@ -231,34 +244,57 @@ final class AppCoordinator {
     // MARK: - Internals
 
     /// Opens bb.app: activates it when it runs, launches it when it does not.
-    /// A failure is an alert, like every other action that could not happen,
-    /// because a menu row that silently does nothing reads as a broken app.
-    private func activateBB() {
+    /// Returns once AppKit has answered, true when bb is up. A failure is an
+    /// alert, like every other action that could not happen, because a menu
+    /// row that silently does nothing reads as a broken app.
+    private func activateBB() async -> Bool {
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bbBundleID) else {
             report(
                 title: "bb Icon — could not open bb",
                 detail: "bb is not installed. Install the bb desktop app to open threads from the menu bar."
             )
-            return
+            return false
         }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] _, error in
-            guard let error else { return }
-            let detail = errorText(error)
+        // Only the failure text crosses back: the `NSRunningApplication` the
+        // completion also carries is not `Sendable`, and nothing here needs it.
+        let failure: String? = await withCheckedContinuation { continuation in
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
             // The completion arrives on an arbitrary queue.
-            Task { @MainActor in
-                self?.report(title: "bb Icon — could not open bb", detail: detail)
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+                continuation.resume(returning: error.map { errorText($0) })
             }
         }
+        if let failure {
+            report(title: "bb Icon — could not open bb", detail: failure)
+            return false
+        }
+        return true
     }
 
-    private func report(title: String, detail: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = detail
-        NSApp.activate()
-        alert.runModal()
+    /// The one extra button an alert can offer besides Close.
+    struct AlertAction {
+        let title: String
+        let run: @MainActor () -> Void
+    }
+
+    /// Shows an alert on the next turn of the main actor, never inline. The
+    /// alert is modal and runs its own loop, so raising it from a panel row's
+    /// action would spin that loop with the panel still open and key, and the
+    /// panel would only close once the alert was dismissed.
+    private func report(title: String, detail: String, action: AlertAction? = nil) {
+        Task { @MainActor in
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = detail
+            if let action {
+                alert.addButton(withTitle: action.title)
+                alert.addButton(withTitle: "Close")
+            }
+            NSApp.activate()
+            let response = alert.runModal()
+            if let action, response == .alertFirstButtonReturn { action.run() }
+        }
     }
 
     private func refreshLoginItem() {

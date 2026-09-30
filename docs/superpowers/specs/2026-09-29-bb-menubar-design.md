@@ -216,17 +216,20 @@ in the app target.**
 | Path under `BBIconPackage/Sources/` | Owns |
 | --- | --- |
 | `BBIconCore/ErrorText.swift` | Ported unchanged. |
+| `BBIconCore/ClockTimer.swift` | The one timer the debounce, reconnect, and poll share, on an injected clock. |
 | `BBIconCore/Runtime/RuntimeFile.swift` | Parse `bb-app-runtime.json`. No I/O. |
 | `BBIconCore/Runtime/RuntimeSession.swift` | Watch, debounce, liveness, the "not running" state. |
-| `BBIconCore/Runtime/FSEventsWatch.swift` | Ported from Paseo Icon. |
+| `BBIconCore/Runtime/DirectoryWatcher.swift` | Keeping the `~/.bb` watch attached. Ported from Paseo Icon's `RegistryWatcher`. |
+| `BBIconCore/Runtime/FSEventsWatch.swift` | Ported from Paseo Icon, with the path filter injected. |
 | `BBIconCore/Server/APIModels.swift` | Lenient `Decodable` thread and project rows. |
-| `BBIconCore/Server/BBHTTPClient.swift` | The two GETs, over an injected transport. |
+| `BBIconCore/Server/HTTPClient.swift` | One HTTP round trip, injected; the `URLSession` one ships. |
+| `BBIconCore/Server/BBAPI.swift` | The two GETs, the open-thread request, and their failure text. |
+| `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | The socket, injected. Ported from Paseo Icon. |
 | `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, reconnect. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot and connection state. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket mapping above. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Ported: store → icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | Ported: the menu as data. |
-| `BBIconCore/Launch/OpenBB.swift` | The open-thread request and its failure text. |
 | `BBIcon/TrayIcons.swift`, `MenuBarLabel.swift`, `MenuContent.swift` | Ported with renames. |
 | `BBIcon/AppCoordinator.swift`, `BBIconApp.swift` | Object graph, login item, `NSWorkspace`. |
 

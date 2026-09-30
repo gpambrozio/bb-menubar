@@ -15,10 +15,10 @@ struct MenuContent: View {
     let items: [MenuItem]
     let coordinator: AppCoordinator
 
-    /// Closes the panel. Actions that take the user elsewhere call it, the way
-    /// clicking a menu row used to close the menu. Activating bb also makes the
-    /// panel resign key, which closes it on its own, so this is the belt to
-    /// that braces — it is what handles the rows that open nothing.
+    /// Closes the panel. Actions that take the user elsewhere call it first,
+    /// the way clicking a menu row used to close the menu, so the panel is gone
+    /// before any alert the action raises: the coordinator shows its alerts on
+    /// the next main-actor turn, never inline.
     @Environment(\.dismiss) private var dismiss
 
     /// The rows' own height, reported by the rows. It decides one thing: which
@@ -92,13 +92,13 @@ struct MenuContent: View {
             }
 
         case .thread(let row, let label):
-            MenuActionRow { coordinator.openThread(row); dismiss() } label: { _ in
+            MenuActionRow { dismiss(); coordinator.openThread(row) } label: { _ in
                 Text(label).font(MenuMetrics.font)
             }
 
         case .overflow(_, let label):
             // The capped rows are only reachable in bb.
-            MenuActionRow { coordinator.openApp(); dismiss() } label: { _ in
+            MenuActionRow { dismiss(); coordinator.openApp() } label: { _ in
                 Text(label).font(MenuMetrics.font)
             }
 
@@ -113,15 +113,7 @@ struct MenuContent: View {
         case .error(_, let detail):
             // The failure is named in the row itself, clipped to a few lines;
             // clicking shows the whole sentence.
-            //
-            // Closed first, and the alert raised on the next turn. The alert is
-            // modal and runs its own loop, so raising it inline would spin that
-            // loop with this panel still open and key — and the panel would
-            // then only close once the alert was dismissed.
-            MenuActionRow {
-                dismiss()
-                Task { @MainActor in coordinator.showError(detail) }
-            } label: { _ in
+            MenuActionRow { dismiss(); coordinator.showError(detail) } label: { _ in
                 HStack(alignment: .firstTextBaseline, spacing: MenuMetrics.iconSpacing) {
                     Image(systemName: "exclamationmark.triangle")
                     Text(detail)
@@ -137,7 +129,7 @@ struct MenuContent: View {
             }
 
         case .openApp:
-            MenuActionRow { coordinator.openApp(); dismiss() } label: { _ in
+            MenuActionRow { dismiss(); coordinator.openApp() } label: { _ in
                 Text("Open bb").font(MenuMetrics.font)
             }
 
