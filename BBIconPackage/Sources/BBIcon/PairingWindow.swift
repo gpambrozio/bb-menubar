@@ -46,7 +46,7 @@ final class PairingWindowController: NSObject, NSWindowDelegate {
         )
         let hosting = NSHostingController(rootView: view)
         hosting.sizingOptions = .preferredContentSize
-        let window = NSWindow(contentViewController: hosting)
+        let window = EditingWindow(contentViewController: hosting)
         window.title = "Connect to a remote bb"
         window.styleMask = [.titled, .closable]
         // Owned here and dropped in `windowWillClose`, not freed by AppKit
@@ -58,6 +58,15 @@ final class PairingWindowController: NSObject, NSWindowDelegate {
         self.window = window
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// A stored pairing turned up while the window was open — the launch-time
+    /// load answered late. Unless a code is being redeemed, whose own answer
+    /// will replace that pairing, the window says so and offers only Done.
+    func alreadyPaired(handle: String) {
+        guard let form, !form.inProgress else { return }
+        form.error = nil
+        form.notice = "Already paired with \(handle)."
     }
 
     /// Closes the window, if it is open. Used on quit.
@@ -181,5 +190,38 @@ private struct PairingView: View {
         }
         .padding(20)
         .frame(width: 440)
+    }
+}
+
+/// A window whose text fields get the standard editing keys.
+///
+/// ⌘X, ⌘C, ⌘V, ⌘A, ⌘Z, and ⇧⌘Z are menu key equivalents: AppKit finds them
+/// in the main menu's Edit menu, and a text field has no binding of its own.
+/// This app is an accessory with only a `MenuBarExtra`, so there is no Edit
+/// menu to find them in, and pasting a machine code would beep. Rather than
+/// install a main menu underneath SwiftUI, which owns `NSApp.mainMenu` in the
+/// App lifecycle, this window maps the keys to the Edit menu's own actions
+/// and sends them down the responder chain, where the field editor takes them.
+/// Anything the window's own views claim first (the buttons' shortcuts) still
+/// wins.
+final class EditingWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if super.performKeyEquivalent(with: event) { return true }
+        guard event.type == .keyDown, let action = Self.editAction(for: event) else { return false }
+        return NSApp.sendAction(action, to: nil, from: self)
+    }
+
+    static func editAction(for event: NSEvent) -> Selector? {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+        switch (modifiers, key) {
+        case ([.command], "x"): return #selector(NSText.cut(_:))
+        case ([.command], "c"): return #selector(NSText.copy(_:))
+        case ([.command], "v"): return #selector(NSText.paste(_:))
+        case ([.command], "a"): return #selector(NSText.selectAll(_:))
+        case ([.command], "z"): return Selector(("undo:"))
+        case ([.command, .shift], "z"): return Selector(("redo:"))
+        default: return nil
+        }
     }
 }

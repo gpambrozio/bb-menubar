@@ -5,7 +5,8 @@ import Testing
 /// Against the remote bb this Mac is paired with, through the getbb.app
 /// relay, using the pairing the app stored in the Keychain. Opt-in, because it
 /// needs a real pairing, reads the user's real threads, and may raise a
-/// Keychain prompt:
+/// Keychain prompt. Answer it with **Allow**, not Always Allow: that would add
+/// the test runner to the item's access list for good.
 ///
 ///     BB_ICON_LIVE_REMOTE=1 swift test --package-path BBIconPackage --filter LiveRemoteTests
 ///

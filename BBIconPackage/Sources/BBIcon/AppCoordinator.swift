@@ -37,9 +37,14 @@ final class AppCoordinator {
     /// The pairing in use, as last loaded or stored. Only its handle reaches
     /// any view, through the store.
     @ObservationIgnored private var pairing: Pairing?
-    /// Bumped by every save and delete, so a slow launch-time load cannot
-    /// land after the user has paired or forgotten, and undo it.
+    /// Bumped whenever the user decides the pairing — a pair that was
+    /// stored, a Forget — so a slow launch-time load cannot land afterwards
+    /// and undo it.
     @ObservationIgnored private var pairingGeneration = 0
+    /// Set from the moment `pair` queues its save until it has answered.
+    /// While it is set, the Keychain item is (or is about to be) the newer
+    /// pairing, not the one in memory, so a Forget does not delete it.
+    @ObservationIgnored private var saveInFlight = false
     /// Set while a Forget is under way; confirming a second one meanwhile
     /// does nothing, since the first is already forgetting the same pairing.
     @ObservationIgnored private var forgetting = false
@@ -212,6 +217,8 @@ final class AppCoordinator {
             case .success(let pairing):
                 self.store.setError(.pairing, nil)
                 self.use(pairing)
+                // The window was opened before the stored pairing was known.
+                if let pairing { self.pairingWindow.alreadyPaired(handle: pairing.handle) }
             case .failure(let error):
                 self.store.setError(.pairing, errorText(error))
             }
@@ -221,13 +228,15 @@ final class AppCoordinator {
     /// The pairing window's `connect`: parse what was typed, redeem it at
     /// getbb.app, store the answer, and start using it.
     ///
+    /// A code is spent once getbb.app has answered, so a pairing that cannot
+    /// be stored is revoked rather than kept only in memory: it would be lost
+    /// at the next launch and hold one of the account's machine slots. For
+    /// the same reason a pairing this one replaces (one that loaded while the
+    /// code was being redeemed) is revoked, best effort, once replaced.
+    ///
     /// When this Mac's own bb is the server in use, the pairing is kept but
     /// unused, and nothing in the tray changes except the Forget row. The
     /// window says so rather than closing on what looks like no effect.
-    ///
-    /// A code is spent once getbb.app has answered, so a pairing that cannot
-    /// be stored is revoked rather than kept only in memory: it would be lost
-    /// at the next launch and hold one of the account's machine slots.
     private func pair(input: String) async -> PairingWindowController.Outcome {
         let pairing: Pairing
         do {
@@ -235,44 +244,65 @@ final class AppCoordinator {
         } catch {
             return .failed(errorText(error))
         }
-        pairingGeneration += 1
         let pairingStore = self.pairingStore
+        saveInFlight = true
         let saved = await Self.onKeychainQueue { try pairingStore.save(pairing) }
+        saveInFlight = false
         if case .failure(let error) = saved {
             let revokeFailure = await ConnectRevoke.revoke(pairing: pairing, http: http)
             return .failed(([errorText(error), "The code has been used; make a new one to try again."]
                 + (revokeFailure.map { [$0] } ?? [])).joined(separator: " "))
         }
+        pairingGeneration += 1
+        let replaced = self.pairing
         store.setError(.pairing, nil)
         use(pairing)
+
+        var notices: [String] = []
         // Another server in use after `use` can only be this Mac's own bb,
         // which wins over the pairing.
         if let inUse = connection.serverURL, inUse != pairing.serverURL {
-            return .paired(notice: "Paired with \(pairing.handle). bb Icon will watch it whenever this Mac's own bb is not running.")
+            notices.append("Paired with \(pairing.handle). bb Icon will watch it whenever this Mac's own bb is not running.")
         }
-        return .paired(notice: nil)
+        if let replaced, replaced != pairing,
+           let revokeFailure = await ConnectRevoke.revoke(pairing: replaced, http: http) {
+            notices.append(revokeFailure)
+        }
+        return .paired(notice: notices.isEmpty ? nil : notices.joined(separator: "\n\n"))
     }
 
-    /// Revokes the pairing, best effort, then deletes it from the Keychain
-    /// whatever the revoke answered, then stops using it. Whatever did not
-    /// happen is named in one alert afterwards.
+    /// Stops using the pairing at once — the menu is back to "Connect to a
+    /// remote bb…" and the socket closed before anything slow happens — then
+    /// deletes the Keychain item, then revokes the pairing best effort with
+    /// the copy still in memory. The item is deleted whatever the revoke will
+    /// answer. Whatever did not happen is named in one alert afterwards.
+    ///
+    /// A pair whose save is still in flight has replaced the item with a
+    /// newer pairing, which this Forget was not about: it is left alone, and
+    /// that pair starts using it when its save answers.
     private func forget() async {
         guard !forgetting, let pairing else { return }
         forgetting = true
         defer { forgetting = false }
-        let revokeFailure = await ConnectRevoke.revoke(pairing: pairing, http: http)
         pairingGeneration += 1
-        let pairingStore = self.pairingStore
-        let deleted = await Self.onKeychainQueue { try pairingStore.delete() }
         use(nil)
-        var problems: [String] = []
-        if let revokeFailure { problems.append(revokeFailure) }
-        switch deleted {
-        case .success:
-            store.setError(.pairing, nil)
-        case .failure(let error):
-            problems.append(errorText(error) + " bb Icon has stopped using it, but will read it again at its next launch.")
+
+        let deleteFailure: String?
+        if saveInFlight {
+            deleteFailure = nil
+        } else {
+            let pairingStore = self.pairingStore
+            switch await Self.onKeychainQueue({ try pairingStore.delete() }) {
+            case .success:
+                store.setError(.pairing, nil)
+                deleteFailure = nil
+            case .failure(let error):
+                deleteFailure = errorText(error) + " bb Icon has stopped using it, but will read it again at its next launch."
+            }
         }
+        let revokeFailure = await ConnectRevoke.revoke(pairing: pairing, http: http)
+
+        let problems = [revokeFailure, deleteFailure].compactMap { $0 }
         guard !problems.isEmpty else { return }
         report(
             title: "bb Icon — forgetting \(pairing.handle) did not fully succeed",
