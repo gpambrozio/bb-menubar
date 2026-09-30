@@ -3,8 +3,11 @@ import BBIconCore
 import SwiftUI
 
 /// The menu bar app. `MenuBarExtra` in window style is the whole interface, and
-/// every action lives in its panel. No free-standing window is ever created:
-/// the panel belongs to the menu bar item and closes when it resigns key.
+/// every action lives in its panel, which belongs to the menu bar item and
+/// closes when it resigns key. The one free-standing window is the pairing
+/// window, which `AppCoordinator` opens from the "Connect to a remote bb…"
+/// row; it is AppKit's, not a scene here, so closing it never quits the app
+/// and there is no window to restore at launch.
 @main
 struct BBIconApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate

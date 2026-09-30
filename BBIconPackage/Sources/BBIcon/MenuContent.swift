@@ -136,10 +136,15 @@ struct MenuContent: View {
                 Text("Open bb").font(MenuMetrics.font)
             }
 
-        case .connectRemote, .forgetRemote:
-            // Pairing is not wired into the app yet. Until it is, these rows
-            // draw nothing rather than a row that does nothing when clicked.
-            EmptyView()
+        case .connectRemote(let label):
+            MenuActionRow { dismiss(); coordinator.showPairingWindow() } label: { _ in
+                Text(label).font(MenuMetrics.font)
+            }
+
+        case .forgetRemote(let handle, let label):
+            MenuActionRow { dismiss(); coordinator.forgetRemote(handle: handle) } label: { _ in
+                Text(label).font(MenuMetrics.font)
+            }
 
         case .loginItem(let enabled):
             // A Toggle, not a row with a tick in its title: it reports a

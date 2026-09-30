@@ -108,12 +108,18 @@ struct ThreadStoreTests {
     @Test("orders errors by source, whatever order they were set in")
     func errorsOrderedBySource() {
         let store = ThreadStore()
-        store.setError(.open, "b")
+        store.setError(.open, "c")
+        store.setError(.pairing, "b")
         store.setError(.runtime, "a")
-        #expect(store.state.errors == ["a", "b"])
+        #expect(store.state.errors == ["a", "b", "c"])
 
         store.setError(.runtime, nil)
-        #expect(store.state.errors == ["b"])
+        #expect(store.state.errors == ["b", "c"])
+
+        // Where bb is comes before whether it can be read: a pairing that
+        // could not be loaded outranks a fetch that failed.
+        store.setError(.fetch, "fetch")
+        #expect(store.state.errors == ["b", "fetch", "c"])
     }
 
     @Test("turns a snapshot's decode failures into one error, and clears it with the next clean snapshot")
