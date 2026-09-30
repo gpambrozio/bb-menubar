@@ -7,9 +7,16 @@ import Foundation
 /// disconnected are lost), and after a burst of `changed` frames for a thread
 /// or a project. Everything else on the socket is ignored.
 ///
+/// Fetches are capped at one start per `minFetchInterval` (1 s). A running
+/// bb thread announces `events-appended` for as long as it runs, so without
+/// the cap every debounce window would end in a fetch, back to back. A fetch
+/// that is owed sooner waits out the rest of the interval instead. The fetch
+/// on open is exempt: it starts at once, and starts the interval again.
+///
 /// Three rules keep a result from landing on the wrong state:
 /// - At most one fetch runs per connection. An invalidation that arrives while
-///   one runs sets `dirty`, and that fetch's success starts exactly one more.
+///   one runs, or while the interval holds fetches back, sets `dirty`, and
+///   exactly one more fetch follows.
 /// - Every fetch carries the `generation` it started in. Open, loss of the
 ///   connection, and `stop` each start a new generation, and a result from an
 ///   older one is dropped whole: no snapshot, no error, no status.
@@ -78,6 +85,7 @@ public final class RealtimeSession {
     private let onError: (String?) -> Void
     private let clock: any Clock<Duration>
     private let debounce: Duration
+    private let minFetchInterval: Duration
 
     private var running = false
     private var transport: (any WebSocketTransport)?
@@ -93,6 +101,10 @@ public final class RealtimeSession {
     private var dirty = false
     private var fetchTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
+    /// Armed for `minFetchInterval` whenever a fetch starts. While it is set,
+    /// a debounced or follow-up fetch only marks the session `dirty`, and the
+    /// timer starts it when it fires.
+    private var intervalTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
 
     public init(
@@ -103,7 +115,8 @@ public final class RealtimeSession {
         onSnapshot: @escaping (BBSnapshot) -> Void,
         onError: @escaping (String?) -> Void,
         clock: any Clock<Duration> = ContinuousClock(),
-        debounce: Duration = .milliseconds(250)
+        debounce: Duration = .milliseconds(250),
+        minFetchInterval: Duration = .seconds(1)
     ) {
         self.websocketURL = Self.websocketURL(for: serverURL)
         self.makeTransport = makeTransport
@@ -113,6 +126,7 @@ public final class RealtimeSession {
         self.onError = onError
         self.clock = clock
         self.debounce = debounce
+        self.minFetchInterval = minFetchInterval
     }
 
     // MARK: - Lifecycle
@@ -182,8 +196,9 @@ public final class RealtimeSession {
         for message in Self.subscribeMessages {
             transport.send(.text(message))
         }
-        // Whatever changed while disconnected was never announced.
-        startFetch()
+        // Whatever changed while disconnected was never announced, so this
+        // one does not wait for the interval.
+        startFetch(throttled: false)
     }
 
     /// A close or an error from the current transport. Before the socket
@@ -229,6 +244,8 @@ public final class RealtimeSession {
         fetchTask = nil
         debounceTask?.cancel()
         debounceTask = nil
+        intervalTask?.cancel()
+        intervalTask = nil
     }
 
     /// Leaves the old transport's callbacks in place on purpose: `isCurrent`
@@ -270,9 +287,12 @@ public final class RealtimeSession {
 
     // MARK: - Fetching
 
-    private func startFetch() {
+    /// Starts a fetch now, or, with one running or the interval since the
+    /// last start not yet over, owes one (`dirty`). Only the fetch on open
+    /// passes `throttled: false`.
+    private func startFetch(throttled: Bool = true) {
         guard running, isOpen else { return }
-        guard !fetchInFlight else {
+        guard !fetchInFlight, !(throttled && intervalTask != nil) else {
             dirty = true
             return
         }
@@ -282,6 +302,13 @@ public final class RealtimeSession {
         // window that has not closed yet.
         debounceTask?.cancel()
         debounceTask = nil
+        intervalTask?.cancel()
+        intervalTask = after(minFetchInterval) { [weak self] in
+            guard let self else { return }
+            self.intervalTask = nil
+            // A fetch still running starts the owed one when it finishes.
+            if self.dirty, !self.fetchInFlight { self.startFetch() }
+        }
         let generation = self.generation
         let fetch = self.fetch
         fetchTask = Task { @MainActor [weak self] in
@@ -318,7 +345,8 @@ public final class RealtimeSession {
                 guard current() else { return }
             }
             // The invalidations it absorbed already waited out their window,
-            // so the follow-up starts now rather than after another one.
+            // so the follow-up starts as soon as the interval allows rather
+            // than after another window.
             if dirty { startFetch() }
         case .failure(let error):
             onError(errorText(error))

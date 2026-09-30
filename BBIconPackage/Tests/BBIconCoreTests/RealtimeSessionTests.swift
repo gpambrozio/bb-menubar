@@ -182,7 +182,7 @@ struct RealtimeSessionTests {
         let transport = try await h.startConnected()
         transport.simulateText(Self.threadChanged)
         await settle()
-        await h.clock.advance(by: .milliseconds(250))
+        await h.clock.advance(by: .seconds(1))
         await settle(until: { h.log.snapshots.count == 2 })
         #expect(h.log.snapshots.count == 2)
         #expect(h.log.statuses == [.connecting, .connected])
@@ -194,6 +194,9 @@ struct RealtimeSessionTests {
     func changedMessagesAreDebouncedIntoOneFetch() async throws {
         let h = try Harness()
         let transport = try await h.startConnected()
+        // Past the open fetch's minimum interval, so only the debounce decides.
+        await h.clock.advance(by: .seconds(1))
+        await settle()
         for index in 0..<5 {
             if index > 0 { await h.clock.advance(by: .milliseconds(25)) }
             transport.simulateText(index.isMultiple(of: 2) ? Self.threadChanged : Self.projectChanged)
@@ -211,30 +214,71 @@ struct RealtimeSessionTests {
         #expect(h.fetcher.calls == 2)
     }
 
-    @Test("a steady stream of changed frames still fetches every window")
-    func steadyStreamStillFetches() async throws {
+    @Test("a steady stream of changed frames fetches once a second, no more and no less")
+    func steadyStreamIsCappedAtOncePerSecond() async throws {
         let h = try Harness()
         let transport = try await h.startConnected()
-        // A running thread appends events for as long as it runs. A debounce
-        // that restarted on every frame would never fetch while it did.
-        transport.simulateText(Self.threadChanged)
-        await settle()
-        // Windows open at 0, 300, 600, and 900 ms and close 250 ms later, so
-        // the advances to 300, 600, and 900 ms each close one.
+        // A running thread appends events for as long as it runs: a frame
+        // every 100 ms for 5 s. A debounce that restarted on every frame would
+        // never fetch; one that did not, uncapped, would fetch back to back.
+        // Fetches start at 0 (the open), 1, 2, 3, 4, and 5 s.
         var expected = 1
-        for step in 1...10 {
+        for step in 1...50 {
+            transport.simulateText(Self.threadChanged)
+            await settle()
             await h.clock.advance(by: .milliseconds(100))
-            if step.isMultiple(of: 3) {
+            if step.isMultiple(of: 10) {
                 expected += 1
                 await settle(until: { h.fetcher.calls == expected })
             } else {
                 await settle()
             }
             #expect(h.fetcher.calls == expected, "at \(step * 100) ms")
-            transport.simulateText(Self.threadChanged)
-            await settle()
         }
-        #expect(h.fetcher.calls == 4)
+        #expect(h.fetcher.calls == 6)
+    }
+
+    @Test("the fetch on open is not held back by the interval")
+    func openFetchIsImmediate() async throws {
+        let h = try Harness()
+        _ = try await h.startConnected()
+        #expect(h.fetcher.calls == 1)
+        // A new connection within the same second still fetches at once:
+        // what changed while it was down was never announced.
+        h.session.stop()
+        h.session.start()
+        let second = try h.transport(1)
+        second.simulateOpen()
+        await settle(until: { h.fetcher.calls == 2 })
+        #expect(h.fetcher.calls == 2)
+        // And that fetch starts the interval again.
+        second.simulateText(Self.threadChanged)
+        await settle()
+        await h.clock.advance(by: .milliseconds(999))
+        await settle()
+        #expect(h.fetcher.calls == 2)
+        await h.clock.advance(by: .milliseconds(1))
+        await settle(until: { h.fetcher.calls == 3 })
+        #expect(h.fetcher.calls == 3)
+    }
+
+    @Test("a follow-up owed when a slow fetch ends starts at once if the interval has passed")
+    func followUpAfterSlowFetchIsImmediate() async throws {
+        let h = try Harness()
+        h.fetcher.suspends = true
+        h.session.start()
+        let transport = try h.transport(0)
+        transport.simulateOpen()
+        await settle(until: { h.fetcher.pendingCalls == [1] })
+        transport.simulateText(Self.threadChanged)
+        await settle()
+        await h.clock.advance(by: .milliseconds(1500))
+        await settle()
+        #expect(h.fetcher.calls == 1)
+        h.fetcher.release(1)
+        await settle(until: { h.fetcher.pendingCalls == [2] })
+        #expect(h.fetcher.calls == 2, "1.5 s since fetch 1 started, so no wait")
+        h.fetcher.releaseAll()
     }
 
     @Test("other frames, and frames that are not JSON, are ignored")
@@ -273,7 +317,8 @@ struct RealtimeSessionTests {
         for (line, change) in zip(lines, isChange) {
             transport.simulateText(line)
             await settle()
-            await h.clock.advance(by: .milliseconds(300))
+            // Past both the debounce and the one-second minimum interval.
+            await h.clock.advance(by: .seconds(1))
             if change {
                 expected += 1
                 await settle(until: { h.fetcher.calls == expected })
@@ -293,7 +338,7 @@ struct RealtimeSessionTests {
         let transport = try await h.startConnected()
         for line in lines { transport.simulateText(line) }
         await settle()
-        await h.clock.advance(by: .milliseconds(250))
+        await h.clock.advance(by: .seconds(1))
         await settle(until: { h.fetcher.calls == 2 })
         await h.clock.advance(by: .seconds(5))
         await settle()
@@ -318,6 +363,11 @@ struct RealtimeSessionTests {
             #expect(h.fetcher.calls == 1, "never two fetches at once (window \(window))")
         }
         h.fetcher.release(1)
+        await settle()
+        // 750 ms since fetch 1 started: the follow-up waits the remainder
+        // of the one-second interval, not a whole new one.
+        #expect(h.fetcher.calls == 1, "not before a second has passed since fetch 1 started")
+        await h.clock.advance(by: .milliseconds(250))
         await settle(until: { h.fetcher.pendingCalls == [2] })
         #expect(h.fetcher.calls == 2)
         h.fetcher.release(2)
@@ -342,11 +392,14 @@ struct RealtimeSessionTests {
         await settle()
         await h.clock.advance(by: .milliseconds(250))
         await settle()
-        // A second window opens; the follow-up starts before it closes and
-        // already sees this frame's change.
+        // A second window opens. The follow-up owed from the first already
+        // covers this frame, whether it starts before the window closes or
+        // (as here, waiting out the one-second interval) after.
         transport.simulateText(Self.threadChanged)
         await settle()
         h.fetcher.release(1)
+        await settle()
+        await h.clock.advance(by: .milliseconds(750))
         await settle(until: { h.fetcher.pendingCalls == [2] })
         h.fetcher.release(2)
         await settle(until: { h.log.snapshots.count == 2 })

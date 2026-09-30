@@ -121,14 +121,20 @@ URL's path; `http→ws`, `https→wss`). bb Icon does the same:
 - Every `{"type":"changed","entity":"thread"|"project",…}` message schedules a
   re-fetch of the snapshot, debounced ~250 ms so a burst of `events-appended`
   messages costs one fetch. Other message types (`plugin-signal`, …) are ignored.
-- On every (re)connect, re-fetch unconditionally — invalidations sent while
-  disconnected are lost.
+- Re-fetches start at most once per second. A running thread sends
+  `events-appended` for as long as it runs, so the debounce alone would fetch
+  back to back; a re-fetch owed sooner than a second after the previous one
+  started waits out the rest of that second. Only one fetch runs at a time, and
+  invalidations that arrive while one runs or waits cost exactly one more.
+- On every (re)connect, re-fetch unconditionally and at once, whatever the
+  once-per-second cap — invalidations sent while disconnected are lost.
 - Reconnect with bb's own `BbRealtimeClient` backoff: 1 s initial delay, ×1.5 per
   attempt, capped at 30 s, reset on a successful open. An open counts as successful
   once its first fetch succeeds: a bb that accepts the socket and then fails every
   fetch (authentication, a shape this build cannot read) is retried at a growing
   interval, not every second.
-  Backoff and debounce run on an injected clock so they are tested without sleeps.
+  Backoff, debounce, and the fetch cap run on an injected clock so they are
+  tested without sleeps.
 - A socket that fails before it opens names the reason in the error row
   (`bb live updates: …`), so a moved or refused `/ws` is not a silent
   `reconnecting`; the next successful fetch clears it. A socket lost after it opened
@@ -225,7 +231,7 @@ in the app target.**
 | `BBIconCore/Server/HTTPClient.swift` | One HTTP round trip, injected; the `URLSession` one ships. |
 | `BBIconCore/Server/BBAPI.swift` | The two GETs, the open-thread request, and their failure text. |
 | `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | The socket, injected. Ported from Paseo Icon. |
-| `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, reconnect. |
+| `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, cap re-fetches, reconnect. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot and connection state. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket mapping above. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Ported: store → icon, count, sections. |

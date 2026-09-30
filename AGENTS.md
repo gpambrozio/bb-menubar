@@ -41,7 +41,7 @@ agent can see gets tested at all.
 | `BBIconCore/Server/HTTPClient.swift` | One HTTP round trip, injected. |
 | `BBIconCore/Server/BBAPI.swift` | The paged snapshot fetch, the open-thread POST, and `BBAPIError`. |
 | `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | One WebSocket connection, injected. Ported. |
-| `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, re-fetch, reconnect. |
+| `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, re-fetch (at most once a second), reconnect. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, and error rows. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, and bb's list order. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Store state to icon, count, sections. |

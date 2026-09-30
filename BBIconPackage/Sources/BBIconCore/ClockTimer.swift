@@ -8,7 +8,7 @@ extension Clock where Duration == Swift.Duration {
     /// advanced before the task starts still fires it.
     ///
     /// Shared by `RealtimeSession` and `RuntimeSession` for their debounce,
-    /// reconnect, and poll timers.
+    /// fetch-interval, reconnect, and poll timers.
     func timer(delay: Duration, _ body: @escaping @MainActor () -> Void) -> Task<Void, Never> {
         let deadline = now.advanced(by: delay)
         return Task { @MainActor in
