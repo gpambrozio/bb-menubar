@@ -60,7 +60,7 @@ agent can see gets tested at all.
 | `BBIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows. Decides nothing. |
 | `BBIcon/PairingWindow.swift` | The "Connect to a remote bb…" window: instructions, code field, the named failure. Decides nothing. |
 | `BBIcon/AppCoordinator.swift` | Wiring: the object graph, login item, alerts (the Forget confirmation among them), the pairing window, `NSWorkspace`. |
-| `BBIcon/BBIconApp.swift` | The `MenuBarExtra` scene and the app delegate, which holds a quit until a pair or Forget under way has finished. |
+| `BBIcon/BBIconApp.swift` | The `MenuBarExtra` scene and the app delegate, which holds a quit until a pair or Forget under way has finished and any failure or notice it produced has been shown. |
 
 If you find yourself adding a decision to `AppCoordinator`, that is the signal to extract it
 into `BBIconCore` instead.

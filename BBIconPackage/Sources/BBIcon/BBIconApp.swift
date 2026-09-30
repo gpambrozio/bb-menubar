@@ -52,12 +52,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the socket closes with the process instead.
     weak var coordinator: AppCoordinator?
 
-    /// A pair or Forget under way is let finish before the app goes. Quitting
-    /// in the middle of one could spend a code without storing its pairing,
-    /// or delete a pairing without revoking it, leaving a machine slot held
-    /// at getbb.app. The wait is bounded by the HTTP client's 30 s resource
-    /// timeout per request (a pair makes at most two, a Forget one) plus
-    /// the Keychain call, which only a Keychain prompt left open can hold up.
+    /// A pair or Forget under way is let finish before the app goes, and its
+    /// outcome shown. Quitting in the middle of one could spend a code without
+    /// storing its pairing, or delete a pairing without revoking it, leaving a
+    /// machine slot held at getbb.app; and a failure that says to remove a
+    /// device at getbb.app/dashboard is useless if the app quits before it is
+    /// read. So the reply waits until the work is done and any failure or
+    /// notice it produced has been shown in an alert and dismissed. The work
+    /// is bounded by the HTTP client's 30 s resource timeout per request (a
+    /// pair makes at most two, a Forget one) plus the Keychain call, which
+    /// only a Keychain prompt left open can hold up; the alert, by the user.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let coordinator, coordinator.isPairingBusy else { return .terminateNow }
         Task { @MainActor in

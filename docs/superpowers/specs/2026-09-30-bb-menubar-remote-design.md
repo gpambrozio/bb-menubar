@@ -171,7 +171,10 @@ alone.
 
 Quitting while a pair or Forget is under way waits for it to finish — bounded by the HTTP
 timeouts and the Keychain — so a spent code is not lost unstored and a deleted pairing is
-not left unrevoked.
+not left unrevoked, and then for any failure or notice it produced to be shown in an alert
+and dismissed, since the app will not stay open for the window to show it. A pair whose
+save fails after a Forget ran during it deletes the Keychain item itself, which that Forget
+had left alone.
 
 ## Click-through, remote
 

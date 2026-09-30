@@ -28,6 +28,11 @@ final class AppCoordinator {
     /// Loads, pairs, and forgets; the Keychain calls run on its own serial
     /// queue, never the main thread, since a Keychain prompt blocks them.
     @ObservationIgnored private let pairing: PairingController
+    /// Pairs and Forgets whose outcome has not been shown yet, and a quit
+    /// waiting for there to be none. See `waitForPairing`.
+    @ObservationIgnored private var flows = 0
+    @ObservationIgnored private var flowWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var quitting = false
     @ObservationIgnored private let pairingWindow = PairingWindowController()
     @ObservationIgnored private let watcher: DirectoryWatcher
     @ObservationIgnored private var runtimeSession: RuntimeSession?
@@ -169,7 +174,8 @@ final class AppCoordinator {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.pairingWindow.show(connect: { [weak self] input in
-                await self?.pairing.pair(input: input) ?? .failed("bb Icon is shutting down.")
+                guard let self else { return .failed("bb Icon is shutting down.") }
+                return await self.pairAndPresent(input)
             })
         }
     }
@@ -186,27 +192,69 @@ final class AppCoordinator {
             alert.addButton(withTitle: "Forget")
             alert.addButton(withTitle: "Cancel")
             NSApp.activate()
-            guard alert.runModal() == .alertFirstButtonReturn,
-                  let self,
-                  let outcome = await self.pairing.forget(),
-                  !outcome.problems.isEmpty
-            else { return }
-            self.report(
+            guard alert.runModal() == .alertFirstButtonReturn, let self else { return }
+            self.flowBegan()
+            defer { self.flowEnded() }
+            guard let outcome = await self.pairing.forget(), !outcome.problems.isEmpty else { return }
+            // Awaited, so a quit waiting on this flow waits for the alert too.
+            await self.report(
                 title: "bb Icon — forgetting \(outcome.handle) did not fully succeed",
                 detail: outcome.problems.joined(separator: "\n\n"),
                 action: outcome.revokeFailed ? AlertAction(title: "Open getbb.app/dashboard") {
                     if let url = URL(string: "https://getbb.app/dashboard") { NSWorkspace.shared.open(url) }
                 } : nil
-            )
+            ).value
         }
     }
 
-    /// A pair or Forget is under way; see `AppDelegate`'s termination.
-    var isPairingBusy: Bool { pairing.isBusy }
+    /// Pairs, and returns the outcome for the window to show. While the app
+    /// is quitting, the window will not get to show it, so anything the user
+    /// should read — a failure, or a notice — is shown in an alert first.
+    private func pairAndPresent(_ input: String) async -> PairOutcome {
+        flowBegan()
+        defer { flowEnded() }
+        let outcome = await pairing.pair(input: input)
+        guard quitting else { return outcome }
+        switch outcome {
+        case .failed(let message):
+            await report(title: "bb Icon — could not pair", detail: message).value
+        case .paired(let notice?):
+            await report(title: "bb Icon — paired", detail: notice).value
+        case .paired(notice: nil):
+            break
+        }
+        return outcome
+    }
 
-    /// Returns once no pair or Forget is under way.
+    // MARK: - Quitting while pairing
+
+    /// A pair or Forget is under way, or its outcome is still being shown;
+    /// see `AppDelegate`'s termination.
+    var isPairingBusy: Bool { flows > 0 }
+
+    /// Returns once no pair or Forget is under way and every outcome that
+    /// needed showing has been shown and dismissed. From here on, a pair's
+    /// outcome is shown in an alert, since the app will not stay open for
+    /// the window to show it.
     func waitForPairing() async {
-        await pairing.waitUntilIdle()
+        quitting = true
+        guard flows > 0 else { return }
+        await withCheckedContinuation { flowWaiters.append($0) }
+    }
+
+    /// A pair or Forget from the moment it starts until its outcome has been
+    /// shown. Counted here rather than read from `PairingController.isBusy`,
+    /// which ends when the work does, before anyone has seen the result.
+    private func flowBegan() {
+        flows += 1
+    }
+
+    private func flowEnded() {
+        flows -= 1
+        guard flows == 0 else { return }
+        let waiters = flowWaiters
+        flowWaiters = []
+        for waiter in waiters { waiter.resume() }
     }
 
     /// Reads the stored pairing at launch. A pairing window opened before it
@@ -286,7 +334,11 @@ final class AppCoordinator {
     /// alert is modal and runs its own loop, so raising it from a panel row's
     /// action would spin that loop with the panel still open and key, and the
     /// panel would only close once the alert was dismissed.
-    private func report(title: String, detail: String, action: AlertAction? = nil) {
+    ///
+    /// Returns the task, which ends once the alert is dismissed, for a caller
+    /// that must not finish before the user has read it.
+    @discardableResult
+    private func report(title: String, detail: String, action: AlertAction? = nil) -> Task<Void, Never> {
         Task { @MainActor in
             let alert = NSAlert()
             alert.messageText = title

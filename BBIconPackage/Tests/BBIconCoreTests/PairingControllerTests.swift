@@ -20,10 +20,43 @@ struct PairingControllerTests {
         )
     }
 
+    /// Hands requests to a `FakeHTTPClient`, except that a request for a held
+    /// path waits for its gate first. Records each path as it is asked,
+    /// before any wait, so a test can see a request that has not answered.
+    final class GatedHTTPClient: HTTPClient, @unchecked Sendable {
+        private let inner: FakeHTTPClient
+        private let lock = NSLock()
+        private var gates: [String: AsyncGate] = [:]
+        private var askedPaths: [String] = []
+
+        init(_ inner: FakeHTTPClient) {
+            self.inner = inner
+        }
+
+        var asked: [String] { lock.withLock { askedPaths } }
+
+        func hold(_ path: String) -> AsyncGate {
+            let gate = AsyncGate()
+            lock.withLock { gates[path] = gate }
+            return gate
+        }
+
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            let path = request.url?.path ?? ""
+            let gate = lock.withLock { () -> AsyncGate? in
+                askedPaths.append(path)
+                return gates.removeValue(forKey: path)
+            }
+            if let gate { await gate.wait() }
+            return try await inner.send(request)
+        }
+    }
+
     @MainActor
     struct Harness {
         let threadStore = ThreadStore()
         let http = FakeHTTPClient()
+        let gated: GatedHTTPClient
         let factory = FakeTransportFactory()
         let keychain: FakePairingStore
         let executor = ManualPairingStoreExecutor()
@@ -33,9 +66,10 @@ struct PairingControllerTests {
         /// getbb.app redeems any code as `studio` and revokes anything.
         init(stored: Pairing? = nil) async {
             keychain = FakePairingStore(stored)
+            gated = GatedHTTPClient(http)
             connection = ServerConnection(store: threadStore, http: http, makeTransport: factory.make, clock: TestClock())
             controller = PairingController(
-                store: keychain, http: http, executor: executor, threadStore: threadStore, connection: connection
+                store: keychain, http: gated, executor: executor, threadStore: threadStore, connection: connection
             )
             await http.respond(
                 PairingControllerTests.redeemPath,
@@ -246,26 +280,81 @@ struct PairingControllerTests {
         #expect(h.paired == "studio")
     }
 
-    @Test("a launch-time load that answers after a Forget is dropped")
+    @Test("a load that answers after a Forget is dropped")
     func staleLoadAfterForget() async throws {
-        let h = await Harness()
+        let mini = try Self.pairing("mini")
+        let h = await Harness(stored: mini)
+        await h.controller.load()
+        // A second load, held, so that only the Forget can make it stale.
         h.executor.hold()
         let loading = Task { await h.controller.load() }
         await eventually { h.executor.pending == 1 }
-        let pairing = Task { await h.controller.pair(input: "code-test") }
-        await eventually { h.executor.pending == 2 }
-        h.executor.release(1)
-        #expect(await pairing.value == .paired(notice: nil))
         let forgetting = Task { await h.controller.forget() }
         await eventually { h.executor.pending == 2 }
         h.executor.release(1)
-        #expect(await forgetting.value?.handle == "studio")
+        #expect(await forgetting.value?.handle == "mini")
         // The load read the item before the delete removed it.
-        try h.keychain.save(try Self.pairing("studio"))
+        try h.keychain.save(mini)
         h.executor.release()
         #expect(await loading.value == nil)
         #expect(h.controller.pairing == nil)
         #expect(h.paired == nil)
+    }
+
+    @Test(
+        "a pair's save that fails after a Forget ran deletes the forgotten item, and names a failed delete",
+        arguments: [false, true]
+    )
+    func failedSaveAfterForgetDeletes(deleteFails: Bool) async throws {
+        let h = await Harness(stored: try Self.pairing("mini"))
+        await h.controller.load()
+        h.keychain.failSave("the Keychain is full")
+        if deleteFails { h.keychain.failDelete("the Keychain is locked") }
+        h.executor.hold()
+        let pairing = Task { await h.controller.pair(input: "code-test") }
+        await eventually { h.executor.pending == 1 }
+        #expect(await h.controller.forget()?.handle == "mini", "the save is in flight, so Forget leaves the item")
+        #expect(h.keychain.deletes == 0)
+        h.executor.release()
+        await eventually { h.executor.pending == 1 }
+        h.executor.release()
+        #expect(await pairing.value == .failed("the Keychain is full " + PairingController.codeSpent))
+        #expect(h.keychain.deletes == 1)
+        #expect(h.paired == nil)
+        #expect(await h.revoked() == ["m-mini", "m-studio"])
+        if deleteFails {
+            #expect(h.keychain.pairing != nil)
+            #expect(h.errors == ["the Keychain is locked " + PairingController.stillStored])
+        } else {
+            #expect(h.keychain.pairing == nil)
+            #expect(h.errors.isEmpty)
+        }
+    }
+
+    @Test("busy while a Forget runs, until its revoke has answered")
+    func forgetBusyUntilRevokeAnswers() async throws {
+        let h = await Harness(stored: try Self.pairing("mini"))
+        await h.controller.load()
+        h.executor.hold()
+        let revoke = h.gated.hold(Self.revokePath)
+        let forgetting = Task { await h.controller.forget() }
+        await eventually { h.executor.pending == 1 }
+        #expect(h.controller.isBusy)
+        let idle = Flag()
+        let waiting = Task {
+            await h.controller.waitUntilIdle()
+            idle.raised = true
+        }
+        h.executor.release()
+        await eventually { h.gated.asked.contains(Self.revokePath) }
+        await settle()
+        #expect(h.controller.isBusy, "the delete is done, the revoke is not")
+        #expect(!idle.raised)
+        revoke.open()
+        #expect(await forgetting.value?.problems == [])
+        await waiting.value
+        #expect(idle.raised)
+        #expect(!h.controller.isBusy)
     }
 
     @Test("busy while a pair runs, and idle waiters are let go when it ends")

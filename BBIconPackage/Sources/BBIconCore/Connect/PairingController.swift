@@ -140,8 +140,11 @@ public final class PairingController {
     /// starts using it.
     ///
     /// A pairing that cannot be stored is revoked rather than kept only in
-    /// memory, where it would be lost at the next launch. A pairing this one
-    /// replaces is revoked once replaced. When this Mac's own bb is the server
+    /// memory, where it would be lost at the next launch. If a Forget ran
+    /// while that save was in flight, it left the item alone for this pair's
+    /// sake; with the save failed, the item may still hold the forgotten
+    /// pairing, so it is deleted here. A pairing this one replaces is revoked
+    /// once replaced. When this Mac's own bb is the server
     /// in use, the new pairing is kept but unused, and the notice says so:
     /// nothing else in the tray would change.
     public func pair(input: String) async -> PairOutcome {
@@ -156,12 +159,17 @@ public final class PairingController {
         }
 
         let pairingStore = self.pairingStore
+        let generationBeforeSave = generation
         savesInFlight += 1
         let saved = await executor.run { try pairingStore.save(redeemed) }
         savesInFlight -= 1
         if case .failure(let error) = saved {
             let message = errorText(error)
             threadStore.setError(.pairing, message)
+            // Only a Forget moves the generation while a pair is saving.
+            if generation != generationBeforeSave {
+                await deleteForgotten()
+            }
             let revokeFailure = await ConnectRevoke.revoke(pairing: redeemed, http: http)
             return .failed(([message, Self.codeSpent] + (revokeFailure.map { [$0] } ?? [])).joined(separator: " "))
         }
@@ -195,7 +203,8 @@ public final class PairingController {
     ///
     /// A pair whose save is still in flight has replaced the item with a
     /// newer pairing, which this Forget is not about: the item is left alone,
-    /// and that pair starts using it when its save answers.
+    /// and that pair starts using it when its save answers — or, if the save
+    /// fails, deletes the item itself (see `pair`).
     public func forget() async -> ForgetReport? {
         guard !forgetting, let forgotten = pairing else { return nil }
         forgetting = true
@@ -209,15 +218,7 @@ public final class PairingController {
 
         var deleteFailure: String?
         if savesInFlight == 0 {
-            let pairingStore = self.pairingStore
-            switch await executor.run({ try pairingStore.delete() }) {
-            case .success:
-                threadStore.setError(.pairing, nil)
-            case .failure(let error):
-                let message = errorText(error) + " " + Self.stillStored
-                threadStore.setError(.pairing, message)
-                deleteFailure = message
-            }
+            deleteFailure = await deleteForgotten()
         }
         let revokeFailure = await ConnectRevoke.revoke(pairing: forgotten, http: http)
 
@@ -226,6 +227,22 @@ public final class PairingController {
             problems: [revokeFailure, deleteFailure].compactMap { $0 },
             revokeFailed: revokeFailure != nil
         )
+    }
+
+    /// Deletes the Keychain item for a pairing that was forgotten, and
+    /// returns the failure, which is also the `.pairing` row.
+    @discardableResult
+    private func deleteForgotten() async -> String? {
+        let pairingStore = self.pairingStore
+        switch await executor.run({ try pairingStore.delete() }) {
+        case .success:
+            threadStore.setError(.pairing, nil)
+            return nil
+        case .failure(let error):
+            let message = errorText(error) + " " + Self.stillStored
+            threadStore.setError(.pairing, message)
+            return message
+        }
     }
 
     private func use(_ pairing: Pairing?) {
