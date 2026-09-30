@@ -50,6 +50,8 @@ Everything in `AGENTS.md` still holds (never crash the tray, no silent caps, eve
 
 **Files:** create `Connect/ConnectHealth.swift`, `Connect/ConnectRevoke.swift`, tests.
 
+> Later removed: `ConnectRevoke` is gone, since a device cannot revoke itself (getbb.app answers 401); see the design's "The menu".
+
 - [ ] `ConnectHealth.probe(pairing:http:) async -> ConnectHealthFinding` over `GET {serverURL}/api/connect/servers` with the header: `.revoked` (401/403), `.offline` (2xx and the entry whose `handle` equals the pairing's has `live == false`; also when no entry matches), `.unreachable(String)` (transport error or ≥500), `.live` (2xx and `live == true`), `.unreadable` (bad body). `message(handle:)` gives the spec's error-row texts; `.live` has none.
 - [ ] `ConnectRevoke.revoke(pairing:http:) async -> String?` — `POST https://getbb.app/api/connect/revoke-machine`, header, body `{"machineId":…}`; `nil` on `{ok: true}` 2xx, otherwise a sentence naming the failure. Never throws.
 - [ ] Tests: every classification row; exact requests; the credential never in any returned text.
@@ -73,6 +75,7 @@ Everything in `AGENTS.md` still holds (never crash the tray, no silent caps, eve
 - [ ] Coordinator loads the pairing from `KeychainPairingStore` at start (a load failure is an error row, not a crash) and feeds `ServerConnection`.
 - [ ] `.connectRemote` opens a small window (SwiftUI `Window` scene or an `NSWindow` hosting a SwiftUI view; the app is `.accessory`, so bring it forward explicitly) with the spec's instructions, a code field, Connect/Cancel, a progress state, and the named error. On success: save, feed `ServerConnection`, close.
 - [ ] `.forgetRemote` → confirmation alert (deferred to the next main-actor turn, as `report` does) → `ConnectRevoke` → delete from the store whatever revoke said → feed `nil` → if revoke failed, a follow-up alert naming it and pointing to getbb.app/dashboard.
+  > Later changed: Forget sends no revoke (a device cannot revoke itself; see the design) and points to getbb.app/dashboard instead.
 - [ ] Opt-in `LiveRemoteTests` (`BB_ICON_LIVE_REMOTE=1`): load the stored pairing, fetch one snapshot through the relay, assert no decode failures. Never opens a thread, never prints the pairing.
 - [ ] App build 0 warnings; full suite green.
 - [ ] Commit `feat(app): pair with and forget a remote bb`.

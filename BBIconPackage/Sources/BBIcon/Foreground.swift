@@ -26,10 +26,12 @@ enum Foreground {
     }
 
     /// Runs `alert` modally, in front. The alert's window exists only once it
-    /// has been laid out, so that comes first.
+    /// has been laid out, so that comes first, and it is centred before it is
+    /// ordered in, so it does not flash at the screen's origin.
     @discardableResult
     static func runModal(_ alert: NSAlert) -> NSApplication.ModalResponse {
         alert.layout()
+        alert.window.center()
         bring(alert.window)
         return alert.runModal()
     }

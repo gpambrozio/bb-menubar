@@ -198,11 +198,21 @@ final class AppCoordinator {
             alert.addButton(withTitle: "Cancel")
             let answer = Foreground.runModal(alert)
             guard answer == .alertFirstButtonReturn || answer == .alertSecondButtonReturn, let self else { return }
+            let openDashboard = answer == .alertFirstButtonReturn
             self.flowBegan()
             defer { self.flowEnded() }
-            guard let outcome = await self.pairing.forget() else { return }
-            if answer == .alertFirstButtonReturn { Self.openDashboard() }
-            guard !outcome.problems.isEmpty else { return }
+            // Nil: nothing left to forget (another Forget got there first).
+            // The dashboard is still what was asked for.
+            guard let outcome = await self.pairing.forget() else {
+                if openDashboard { Self.openDashboard() }
+                return
+            }
+            // With problems, the follow-up alert offers the dashboard itself;
+            // opening it now as well would open it twice.
+            guard !outcome.problems.isEmpty else {
+                if openDashboard { Self.openDashboard() }
+                return
+            }
             // Awaited, so a quit waiting on this flow waits for the alert too.
             await self.report(
                 title: "bb Icon — forgetting \(outcome.handle) did not fully succeed",

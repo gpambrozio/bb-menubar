@@ -27,7 +27,9 @@ final class LoopbackHTTPServer: @unchecked Sendable {
     /// The head (request line and headers) of every request, in order.
     var requestHeads: [String] { lock.withLock { heads } }
 
-    /// Starts listening and returns the port, or throws if it cannot.
+    /// Starts listening and returns the port, or throws if it cannot: a
+    /// listener that fails, waits, or is cancelled before it is ready ends the
+    /// wait rather than hanging the test.
     func start() async throws -> UInt16 {
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
@@ -48,6 +50,15 @@ final class LoopbackHTTPServer: @unchecked Sendable {
                 case .failed(let error):
                     guard resumed.raise() else { return }
                     continuation.resume(throwing: error)
+                case .waiting(let error):
+                    // Waiting would wait forever for a loopback listener
+                    // that cannot bind: give up and say why.
+                    guard resumed.raise() else { return }
+                    listener.cancel()
+                    continuation.resume(throwing: error)
+                case .cancelled:
+                    guard resumed.raise() else { return }
+                    continuation.resume(throwing: CancellationError())
                 default:
                     break
                 }

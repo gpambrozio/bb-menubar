@@ -7,6 +7,7 @@ import Testing
 /// refuses one it will not accept (HTTP 401, an HTML body). Nothing leaves
 /// the Mac.
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct URLSessionWebSocketTransportTests {
     static let cookie = "__Secure-bb-connect.desktop_session=session-test"
 
