@@ -10,13 +10,11 @@ import Testing
 struct ConnectHealthTests {
     private static let path = "/api/connect/servers"
 
+    /// Built by decoding, the way the Keychain item is read, so the pairing
+    /// passes the same checks a stored one does.
     private static func pairing(serverURL: String = "https://mini.getbb.app") throws -> Pairing {
-        Pairing(
-            serverURL: try #require(URL(string: serverURL)),
-            handle: "mini",
-            machineId: "mach-test",
-            credential: "cred-test"
-        )
+        let fields = ["serverURL": serverURL, "handle": "mini", "machineId": "mach-test", "credential": "cred-test"]
+        return try JSONDecoder().decode(Pairing.self, from: JSONEncoder().encode(fields))
     }
 
     private static func servers(_ entries: (handle: String, live: Bool)...) -> String {
@@ -47,12 +45,35 @@ struct ConnectHealthTests {
         #expect(request.httpBody == nil)
     }
 
-    @Test("a trailing slash on the server URL does not double the path's slash")
-    func trailingSlashIsTolerated() async throws {
+    @Test("the probe goes to the server's origin, with or without a trailing slash", arguments: [
+        "https://mini.getbb.app",
+        "https://mini.getbb.app/",
+    ])
+    func probeURLIsOriginOnly(serverURL: String) async throws {
         let http = FakeHTTPClient()
         await http.respond(Self.path, body: Self.servers(("mini", true)))
-        _ = await ConnectHealth.probe(pairing: try Self.pairing(serverURL: "https://mini.getbb.app/"), http: http)
-        #expect(await http.requests.first?.url?.absoluteString == "https://mini.getbb.app/api/connect/servers")
+        _ = await ConnectHealth.probe(pairing: try Self.pairing(serverURL: serverURL), http: http)
+        let request = try #require(await http.requests.first)
+        #expect(request.url?.absoluteString == "https://mini.getbb.app/api/connect/servers")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    /// `Pairing` refuses a server URL with anything past its origin, so these
+    /// cannot reach `probe`; the URL builder still takes only the origin, so
+    /// a path, query, fragment, or user info could not move the request or
+    /// turn into an `Authorization` if that check ever loosened.
+    @Test("the probe URL is built from the server's origin alone", arguments: [
+        "https://mini.getbb.app",
+        "https://mini.getbb.app/",
+        "https://mini.getbb.app/x/y?q=1#f",
+        "https://u:p@mini.getbb.app",
+    ])
+    func serversURLIsOriginOnly(serverURL: String) throws {
+        let server = try #require(URL(string: serverURL))
+        let url = try #require(ConnectHealth.serversURL(server))
+        #expect(url.absoluteString == "https://mini.getbb.app/api/connect/servers")
+        #expect(url.user() == nil)
+        #expect(url.password() == nil)
     }
 
     // MARK: - Classification
@@ -80,9 +101,19 @@ struct ConnectHealthTests {
     @Test("a server missing from the account's list is offline", arguments: [
         ServersBody(#"{"servers":[]}"#),
         ServersBody(#"{"servers":[{"handle":"other","name":"Other","live":true}]}"#),
+        ServersBody(#"{"servers":[{"handle":"other"},"junk",{"live":true},{"handle":7,"live":true}]}"#),
     ])
     func missingEntryIsOffline(body: ServersBody) async throws {
         #expect(try await probe(body: body.json) == .offline)
+    }
+
+    @Test("malformed rows for other servers are ignored; the paired server's own row decides", arguments: [
+        ProbeCase(status: 200, body: #"{"servers":[{"handle":"other"},{"handle":"mini","name":"Mini","live":true}]}"#),
+        ProbeCase(status: 200, body: #"{"servers":["junk",{"live":false},{"handle":"mini","live":true},{"handle":7}]}"#),
+        ProbeCase(status: 200, body: #"{"servers":[{"handle":"other","live":"no"},{"handle":"mini","live":true}]}"#),
+    ])
+    func malformedUnrelatedRowsAreIgnored(testCase: ProbeCase) async throws {
+        #expect(try await probe(body: testCase.body) == .live)
     }
 
     @Test("an answer of 500 or more means getbb.app could not be reached", arguments: [500, 502, 503])
@@ -92,7 +123,7 @@ struct ConnectHealthTests {
 
     @Test("any other non-2xx answer is also unreachable, as bb's own client classifies it", arguments: [301, 400, 404, 429])
     func otherStatusIsUnreachable(status: Int) async throws {
-        #expect(try await probe(status: status, body: "") == .unreachable("HTTP \(status)"))
+        #expect(try await probe(status: status, body: "") == .unreachable("getbb.app answered HTTP \(status)"))
     }
 
     @Test("a transport failure is unreachable, naming the failure")
@@ -103,13 +134,17 @@ struct ConnectHealthTests {
         #expect(await http.requests.count == 1)
     }
 
-    /// Foundation words its own decoding failures, so the test holds the
-    /// part bb Icon writes: which field, under which path.
+    /// Foundation words its own decoding failures, so beyond its standard
+    /// "not valid JSON" the test holds the part bb Icon writes: which field,
+    /// under which path. The paired server's own row being malformed is
+    /// unreadable, not offline: the answer does not say which it is.
     @Test("a 2xx body that is not the expected JSON is unreadable, naming the field", arguments: [
-        UnreadableCase(body: "<html>hello</html>", detailPrefix: ""),
+        UnreadableCase(body: "<html>hello</html>", detailPrefix: "The given data was not valid JSON"),
+        UnreadableCase(body: #"{"servers":"cred-test"}"#, detailPrefix: "servers: "),
         UnreadableCase(body: "{}", detailPrefix: "missing servers"),
         UnreadableCase(body: #"{"servers":[{"handle":"mini"}]}"#, detailPrefix: "missing servers.[0].live"),
         UnreadableCase(body: #"{"servers":[{"handle":"mini","live":"yes"}]}"#, detailPrefix: "servers.[0].live: "),
+        UnreadableCase(body: #"{"servers":[{"handle":"other","live":true},{"handle":"MINI","live":null}]}"#, detailPrefix: "servers.[1].live: "),
     ])
     func badBodyIsUnreadable(testCase: UnreadableCase) async throws {
         let finding = try await probe(body: testCase.body)
@@ -118,7 +153,6 @@ struct ConnectHealthTests {
             return
         }
         #expect(detail.hasPrefix(testCase.detailPrefix))
-        #expect(!detail.isEmpty)
     }
 
     // MARK: - Messages

@@ -10,13 +10,11 @@ struct ConnectRevokeTests {
     private static let path = "/api/connect/revoke-machine"
     private static let dashboard = "remove the device by hand at getbb.app/dashboard"
 
+    /// Built by decoding, the way the Keychain item is read, so the pairing
+    /// passes the same checks a stored one does.
     private static func pairing(machineId: String = "mach-test") throws -> Pairing {
-        Pairing(
-            serverURL: try #require(URL(string: "https://mini.getbb.app")),
-            handle: "mini",
-            machineId: machineId,
-            credential: "cred-test"
-        )
+        let fields = ["serverURL": "https://mini.getbb.app", "handle": "mini", "machineId": machineId, "credential": "cred-test"]
+        return try JSONDecoder().decode(Pairing.self, from: JSONEncoder().encode(fields))
     }
 
     private func revoke(status: Int = 200, body: String) async throws -> String? {

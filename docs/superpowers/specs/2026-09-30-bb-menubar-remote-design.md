@@ -109,7 +109,7 @@ each case, as today. When a fetch or the socket fails, bb Icon asks
 | --- | --- |
 | 401/403 from the relay | bb Connect no longer accepts bb Icon's pairing with `<handle>`. Pair again, or forget it. |
 | 2xx, and this server's `live` is false | `<handle>` is offline — the Mac running it may be asleep or bb may be closed there. |
-| no answer | getbb.app could not be reached: … |
+| no answer, or any other non-2xx | getbb.app could not be reached: … (the failure, or `HTTP <n>` for a 5xx, or `getbb.app answered HTTP <n>`) |
 | 2xx and `live` true | the original fetch or socket error, as today |
 
 Reconnecting continues with the existing backoff (1 s ×1.5, capped at 30 s) in every
