@@ -21,10 +21,12 @@ public enum RuntimeResolution: Equatable, Sendable {
 /// delivered, so a poll that finds bb where it was is silent and bb
 /// relaunching on a new port is not.
 ///
-/// Reads run detached, off the main actor. Every read is numbered, and a
-/// result is applied only if it is newer than the last one applied and the
-/// session has not stopped since the read began, so a slow read cannot land
-/// over a newer answer or after `stop()`.
+/// Reads run on a global dispatch queue, off the main actor and off Swift
+/// concurrency's thread pool, since a read is a blocking call. At most one
+/// runs at a time: a read requested while one is in flight is remembered,
+/// and exactly one more starts when it finishes, so a slow disk cannot pile
+/// reads up. A read carries the generation it started in and `stop()` starts
+/// a new one, so a read that finishes after `stop()` is dropped whole.
 ///
 /// Every callback fires on the main actor. Timers use the injected clock.
 @MainActor
@@ -44,15 +46,16 @@ public final class RuntimeSession {
     private var stopWatching: (() -> Void)?
     private var debounceTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
-    /// The number of the most recent read started.
-    private var readsStarted = 0
-    /// Results numbered at or below this are dropped: already superseded, or
-    /// started before the last `stop()`.
-    private var appliedThrough = 0
+    /// Bumped by `stop()`; a read from an older generation is dropped.
+    private var generation = 0
+    private var readInFlight = false
+    /// A read was asked for while one was in flight.
+    private var rereadPending = false
 
     /// - Parameters:
     ///   - readFile: the runtime file's bytes, or nil when it does not exist.
-    ///     Runs detached; a throw is reported as a named error.
+    ///     Runs on a global dispatch queue; a throw is reported as a named
+    ///     error. While it runs, further reads wait for it, so it must return.
     ///   - isProcessAlive: whether the file's `pid` is a live process.
     ///   - isAppRunning: whether bb.app is running.
     ///   - watch: starts watching the file; returns the stop function.
@@ -114,7 +117,9 @@ public final class RuntimeSession {
     public func stop() {
         guard running else { return }
         running = false
-        appliedThrough = readsStarted
+        generation += 1
+        readInFlight = false
+        rereadPending = false
         debounceTask?.cancel()
         debounceTask = nil
         pollTask?.cancel()
@@ -135,28 +140,47 @@ public final class RuntimeSession {
     }
 
     private func startRead() {
-        readsStarted += 1
-        let number = readsStarted
+        guard running else { return }
+        guard !readInFlight else {
+            rereadPending = true
+            return
+        }
+        readInFlight = true
+        rereadPending = false
+        let generation = self.generation
         let readFile = self.readFile
         Task { @MainActor [weak self] in
-            // Detached so the file system call never runs on the main actor,
-            // where it would stall the menu bar behind a slow disk.
-            let outcome = await Task.detached { Result { try readFile() } }.value
-            self?.finishRead(outcome, number: number)
+            let outcome = await Self.read(readFile)
+            self?.finishRead(outcome, generation: generation)
         }
     }
 
-    private func finishRead(_ outcome: Result<Data?, any Error>, number: Int) {
-        guard running, number > appliedThrough else { return }
-        appliedThrough = number
+    /// Runs `readFile` on a global queue. Not `Task.detached`: that would
+    /// block one of Swift concurrency's few pool threads for as long as the
+    /// file system takes, where a dispatch queue can add a thread.
+    private nonisolated static func read(_ readFile: @escaping @Sendable () throws -> Data?) async -> Result<Data?, any Error> {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: Result { try readFile() })
+            }
+        }
+    }
+
+    private func finishRead(_ outcome: Result<Data?, any Error>, generation: Int) {
+        guard running, generation == self.generation else { return }
+        readInFlight = false
         let resolution = resolve(outcome)
         if resolution != lastDelivered {
             lastDelivered = resolution
             onChange(resolution)
         }
-        // `onChange` may have stopped the session.
+        // Either callback may have stopped the session.
         guard running else { return }
         afterRead?()
+        guard running else { return }
+        // The request it absorbed already waited out its debounce, so the
+        // follow-up starts now rather than after another one.
+        if rereadPending { startRead() }
     }
 
     private func resolve(_ outcome: Result<Data?, any Error>) -> RuntimeResolution {

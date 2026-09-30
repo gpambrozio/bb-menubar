@@ -52,8 +52,17 @@ public final class DirectoryWatcher {
                 self.detach = try self.open(
                     dir,
                     { [weak self] in self?.notify?() },
-                    // The watch died. Forget it so the next ensureAttached opens a fresh one.
-                    { [weak self] in self?.detach = nil }
+                    // The watch died, usually because the directory was
+                    // deleted or replaced. Forget it so the next
+                    // ensureAttached opens a fresh one, and report it as a
+                    // change: whatever replaced the directory may hold a new
+                    // file, and the read it triggers is also what re-attaches,
+                    // instead of waiting for the poll.
+                    { [weak self] in
+                        guard let self else { return }
+                        self.detach = nil
+                        self.notify?()
+                    }
                 )
             } catch {
                 // The directory does not exist yet, or vanished between

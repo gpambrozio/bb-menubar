@@ -153,6 +153,31 @@ struct DirectoryWatcherTests {
         #expect(h.opens.count == 2)
     }
 
+    @Test("a watch that dies is reported as a change, so the re-read and re-attach happen now")
+    func deathNotifies() async throws {
+        let h = Harness(resolveDir: { "/home/.bb" })
+        _ = try h.watch { h.changes += 1 }
+        await settle(until: { h.opens.count == 1 })
+
+        h.opens.first?.fail()
+        #expect(h.changes == 1)
+
+        // What the session's read does on its way out.
+        try h.ensureAttached()
+        await settle(until: { h.opens.count == 2 })
+        #expect(h.opens.count == 2)
+    }
+
+    @Test("a watch that dies after detach reports nothing")
+    func deathAfterDetachIsSilent() async throws {
+        let h = Harness(resolveDir: { "/home/.bb" })
+        let stop = try h.watch { h.changes += 1 }
+        await settle(until: { h.opens.count == 1 })
+        stop()
+        h.opens.first?.fail()
+        #expect(h.changes == 0)
+    }
+
     @Test("stops watching and stops forwarding once detached")
     func detaches() async throws {
         let h = Harness(resolveDir: { "/home/.bb" })
@@ -202,43 +227,5 @@ struct DirectoryWatcherTests {
         await settle()
 
         #expect(h.opens.isEmpty)
-    }
-}
-
-/// A one-shot gate a test opens to release a pending async call. Ported from
-/// paseo-menubar.
-final class AsyncGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private let semaphore = DispatchSemaphore(value: 0)
-    private var opened = false
-
-    func open() {
-        let first = lock.withLock {
-            defer { opened = true }
-            return !opened
-        }
-        if first { semaphore.signal() }
-    }
-
-    func wait() async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                self.semaphore.wait()
-                continuation.resume()
-            }
-        }
-    }
-}
-
-/// Polls `condition` on the main actor until it holds, sleeping on the real
-/// clock between checks, for work that finishes on another thread (a gate's
-/// continuation, a detached read). Gives up after `timeout` so a broken
-/// implementation fails the test's own expectation instead of hanging it.
-@MainActor
-func eventually(timeout: Duration = .seconds(10), _ condition: () -> Bool) async {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while !condition(), clock.now < deadline {
-        try? await clock.sleep(for: .milliseconds(1))
     }
 }

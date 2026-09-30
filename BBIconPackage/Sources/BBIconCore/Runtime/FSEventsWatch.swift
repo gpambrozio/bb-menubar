@@ -77,6 +77,16 @@ public enum FSEventsWatch {
                 copyDescription: nil
             )
 
+            // FSEvents watches the whole subtree, and bb writes under `~/.bb`
+            // constantly (its database, its WAL, thread storage), so almost
+            // every event is one `include` throws away. A second of latency
+            // batches that churn into few callbacks; `NoDefer` still delivers
+            // the first event after a quiet spell at once. It costs no
+            // responsiveness worth having: `RuntimeSession` debounces 300 ms
+            // after this anyway, and the file changes only when bb starts or
+            // quits.
+            let latency: CFTimeInterval = 1.0
+
             // `UseCFTypes` is not optional: without it `eventPaths` is a C
             // `char **`, and reading it as a CFArray sends a message to path
             // bytes. `FileEvents` is what gives each event its own file's path
@@ -95,7 +105,7 @@ public enum FSEventsWatch {
                 &context,
                 [directory] as CFArray,
                 FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-                0.2,
+                latency,
                 flags
             ) else {
                 // `FSEventStreamCreate` never ran, so nothing will ever call

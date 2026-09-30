@@ -13,8 +13,9 @@ struct RuntimeSessionTests {
         RuntimeInfo(pid: pid, serverURL: try #require(URL(string: "http://127.0.0.1:\(port)")), version: "0.44.0")
     }
 
-    /// The runtime file as `readFile` sees it. `readFile` runs detached, so
-    /// this is shared across threads and guards its state with a lock.
+    /// The runtime file as `readFile` sees it. `readFile` runs on a global
+    /// dispatch queue, so this is shared across threads and guards its state
+    /// with a lock.
     final class FakeFile: @unchecked Sendable {
         private let lock = NSLock()
         private var _contents: Data?
@@ -59,12 +60,13 @@ struct RuntimeSessionTests {
         }
     }
 
-    /// Blocks a synchronous read on the thread it runs on. Bounded, so a
-    /// test that forgets to open it fails instead of hanging the pool.
+    /// Blocks a synchronous read on the dispatch thread it runs on. Bounded
+    /// by `gateTimeout`, well past `eventually`'s, so a test that forgets to
+    /// open it fails on its own expectation instead of hanging.
     final class BlockingGate: @unchecked Sendable {
         private let semaphore = DispatchSemaphore(value: 0)
         func open() { semaphore.signal() }
-        func wait() { _ = semaphore.wait(timeout: .now() + 10) }
+        func wait() { _ = semaphore.wait(timeout: .now() + gateTimeout) }
     }
 
     /// The injected watch: keeps the callback so the test can fire it.
@@ -125,7 +127,7 @@ struct RuntimeSessionTests {
         }
 
         /// Gives anything that should not happen a fair chance to happen:
-        /// detached reads, main-actor hops, timers.
+        /// reads on the global queue, main-actor hops, timers.
         func quiesce() async {
             await settle()
             try? await Task.sleep(for: .milliseconds(50))
@@ -201,15 +203,31 @@ struct RuntimeSessionTests {
         h.file.contents = Self.runtimeJSON(port: 38886)
         try await h.startAndSettle()
 
-        h.file.contents = Self.runtimeJSON(pid: 17000, port: 40111)
+        // Only the port: a pid that changed too would pass on the pid alone.
+        h.file.contents = Self.runtimeJSON(port: 40111)
         try h.refresh()
         await h.clock.advance(by: .milliseconds(300))
         await eventually { h.deliveries.count == 2 }
 
         #expect(h.deliveries == [
             .running(try Self.info(port: 38886)),
-            .running(try Self.info(pid: 17000, port: 40111)),
+            .running(try Self.info(port: 40111)),
         ])
+    }
+
+    @Test("bb dying without removing its file is reported")
+    func pidDyingIsReported() async throws {
+        let h = Harness()
+        h.file.contents = Self.runtimeJSON()
+        try await h.startAndSettle()
+
+        // The file is untouched; only the process is gone.
+        h.alive = false
+        try h.refresh()
+        await h.clock.advance(by: .milliseconds(300))
+        await eventually { h.deliveries.count == 2 }
+
+        #expect(h.deliveries == [.running(try Self.info()), .notRunning(error: nil)])
     }
 
     @Test("bb quitting after it was running is reported")
@@ -317,25 +335,56 @@ struct RuntimeSessionTests {
 
     // MARK: - Stale reads and stopping
 
-    @Test("a read that finishes after a newer one is discarded")
-    func staleReadIsDiscarded() async throws {
+    @Test("reads asked for while one is in flight become exactly one more")
+    func readsDoNotPileUp() async throws {
         let h = Harness()
         h.file.contents = Self.runtimeJSON(port: 38886)
         let gate = h.file.holdNextRead()
         try h.start()
         await eventually { h.file.reads == 1 }
 
-        // bb relaunched while the first read was stuck.
-        h.file.contents = Self.runtimeJSON(pid: 17000, port: 40111)
+        // bb relaunched while the first read was stuck, and every trigger
+        // there is fired: two debounced refreshes, a watch event, the poll.
+        h.file.contents = Self.runtimeJSON(port: 40111)
         try h.refresh()
         await h.clock.advance(by: .milliseconds(300))
+        h.watcher.fire()
+        await h.clock.advance(by: .milliseconds(300))
+        await h.clock.advance(by: .seconds(30))
+        await h.quiesce()
+        #expect(h.file.reads == 1, "nothing starts while a read is in flight")
+
+        gate.open()
+        await eventually { h.afterReads == 2 }
+        await h.quiesce()
+        #expect(h.file.reads == 2)
+        #expect(h.afterReads == 2)
+        #expect(h.deliveries == [
+            .running(try Self.info(port: 38886)),
+            .running(try Self.info(port: 40111)),
+        ])
+    }
+
+    @Test("a read left over from before a restart is discarded")
+    func readFromBeforeRestartIsDiscarded() async throws {
+        let h = Harness()
+        h.file.contents = Self.runtimeJSON(port: 38886)
+        let gate = h.file.holdNextRead()
+        try h.start()
+        await eventually { h.file.reads == 1 }
+
+        try h.stop()
+        h.file.contents = Self.runtimeJSON(port: 40111)
+        try h.start()
+        // The stuck read does not hold up the new session's first read.
         await eventually { h.afterReads == 1 }
-        #expect(h.deliveries == [.running(try Self.info(pid: 17000, port: 40111))])
+        #expect(h.file.reads == 2)
+        #expect(h.deliveries == [.running(try Self.info(port: 40111))])
 
         gate.open()
         await eventually { h.file.finished == 2 }
         await h.quiesce()
-        #expect(h.deliveries == [.running(try Self.info(pid: 17000, port: 40111))])
+        #expect(h.deliveries == [.running(try Self.info(port: 40111))])
         #expect(h.afterReads == 1)
     }
 
@@ -367,6 +416,9 @@ struct RuntimeSessionTests {
         let gate = h.file.holdNextRead()
         try h.start()
         await eventually { h.file.reads == 1 }
+        // And a follow-up waiting behind it.
+        try h.refresh()
+        await h.clock.advance(by: .milliseconds(300))
 
         try h.stop()
         gate.open()
@@ -375,6 +427,7 @@ struct RuntimeSessionTests {
 
         #expect(h.deliveries.isEmpty)
         #expect(h.afterReads == 0)
+        #expect(h.file.reads == 1)
     }
 
     @Test("starting again delivers the resolution again, even if unchanged")
