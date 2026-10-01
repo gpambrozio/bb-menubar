@@ -1,0 +1,160 @@
+import Foundation
+
+/// One row of the tray menu, as data. The SwiftUI layer renders this and
+/// nothing else decides what the menu contains, so the whole menu is testable
+/// without a menu bar.
+public enum MenuItem: Equatable, Sendable, Identifiable {
+    /// A disabled section heading carrying its bucket's icon.
+    case sectionHeading(bucket: ThreadBucket, label: String)
+    /// Opens the thread in bb.
+    case thread(row: TrayThreadRow, label: String)
+    /// The capped rows are only reachable in bb, so this opens it. It carries
+    /// its section's bucket rather than the count it dropped, because the
+    /// count is already in the label and two sections that overflow by the
+    /// same number would otherwise share an identity — which is how SwiftUI
+    /// renders one overflow row where the menu needs two.
+    case overflow(bucket: ThreadBucket, label: String)
+    case separator(index: Int)
+    /// A row that does nothing but say something. Numbered, like the
+    /// separators, so two notes never share an identity.
+    case note(index: Int, text: String)
+    /// A named failure. Numbered rather than keyed by its text, because two
+    /// sources can report the same sentence and two rows sharing an identity
+    /// means SwiftUI draws one of them.
+    case error(index: Int, detail: String)
+    /// The one connection line: connected, connecting, reconnecting, or not
+    /// running, naming the remote bb when that is the one watched.
+    case status(label: String)
+    case openApp
+    /// Pairs with a remote bb. Offered while there is no pairing.
+    case connectRemote(label: String)
+    /// Forgets the pairing with the remote bb `handle`. Offered while there
+    /// is one, whether or not a local bb has taken precedence over it.
+    case forgetRemote(handle: String, label: String)
+    case loginItem(enabled: Bool)
+    case quit
+
+    public var id: String {
+        switch self {
+        case .sectionHeading(let bucket, _): "heading:\(bucket.rawValue)"
+        case .thread(let row, _): "row:\(row.id)"
+        case .overflow(let bucket, _): "overflow:\(bucket.rawValue)"
+        case .separator(let index): "sep:\(index)"
+        case .note(let index, _): "note:\(index)"
+        case .error(let index, _): "error:\(index)"
+        case .status: "status"
+        case .openApp: "openApp"
+        case .connectRemote: "connectRemote"
+        case .forgetRemote: "forgetRemote"
+        case .loginItem: "loginItem"
+        case .quit: "quit"
+        }
+    }
+}
+
+public enum MenuModel {
+    public static let statusText: [ConnectionStatus: String] = [
+        .connected: "bb · connected",
+        .connecting: "bb · connecting",
+        .reconnecting: "bb · reconnecting",
+        .notRunning: "bb is not running",
+    ]
+
+    /// The status line's second half for a remote bb, after its handle. Not
+    /// running has no entry: a remote bb is only named while it is the server
+    /// in use, and then the session is always connecting, connected, or
+    /// reconnecting.
+    static let remoteStatusText: [ConnectionStatus: String] = [
+        .connected: "connected",
+        .connecting: "connecting",
+        .reconnecting: "reconnecting",
+    ]
+
+    public static let connectRemoteLabel = "Connect to a remote bb…"
+
+    public static func forgetRemoteLabel(handle: String) -> String {
+        "Forget \(handle)…"
+    }
+
+    /// `bb · connected` for this Mac's bb, `<handle> · connected` for a
+    /// remote one.
+    public static func statusLabel(_ model: TrayViewModel) -> String {
+        if let serverName = model.serverName, let state = remoteStatusText[model.status] {
+            return serverName + " · " + state
+        }
+        return statusText[model.status] ?? model.status.rawValue
+    }
+
+    /// What separates the parts of a thread row.
+    static let partSeparator = "  ·  "
+
+    /// A thread row: its title and its project. Nothing else.
+    public static func rowLabel(_ row: TrayThreadRow) -> String {
+        [row.label, row.projectName].joined(separator: partSeparator)
+    }
+
+    /// The whole menu, in order. Every action lives here: a menu bar item that
+    /// needs a click-through for anything is an app with actions some desktops
+    /// swallow. `loginItemEnabled` is passed in because the menu is data, so
+    /// the rows that exist are decided here and tested here.
+    public static func build(_ model: TrayViewModel, loginItemEnabled: Bool) -> [MenuItem] {
+        var items: [MenuItem] = []
+        var separators = 0
+        var notes = 0
+        func note(_ text: String) {
+            items.append(.note(index: notes, text: text))
+            notes += 1
+        }
+        func separator() {
+            items.append(.separator(index: separators))
+            separators += 1
+        }
+
+        // First in the menu: the fix for it is what the user came for.
+        if !model.errors.isEmpty {
+            for (index, detail) in model.errors.enumerated() {
+                items.append(.error(index: index, detail: detail))
+            }
+            separator()
+        }
+
+        // Only a live connection says anything about threads. While bb is not
+        // running, or the connection is (re)establishing, the rows are gone,
+        // and "No threads" would be a claim this app cannot vouch for.
+        if model.status == .connected {
+            if model.sections.isEmpty {
+                note("No threads")
+            } else {
+                // A rule between sections, not before the first: a leading
+                // separator draws as a stray line under the panel's top edge.
+                for (index, section) in model.sections.enumerated() {
+                    if index > 0 { separator() }
+                    items.append(.sectionHeading(bucket: section.bucket, label: TrayViewModelBuilder.sectionLabels[section.bucket] ?? section.bucket.rawValue))
+                    items.append(contentsOf: section.rows.map { .thread(row: $0, label: rowLabel($0)) })
+                    if section.overflow > 0 {
+                        items.append(.overflow(bucket: section.bucket, label: "…and \(section.overflow) more"))
+                    }
+                }
+            }
+            // The page ceiling was reached. These rows are a subset, and a
+            // subset presented as the whole list is a silent cap.
+            if model.truncated {
+                note("Not all threads shown")
+            }
+            separator()
+        }
+
+        items.append(.status(label: statusLabel(model)))
+        separator()
+        items.append(.openApp)
+        if let handle = model.paired {
+            items.append(.forgetRemote(handle: handle, label: forgetRemoteLabel(handle: handle)))
+        } else {
+            items.append(.connectRemote(label: connectRemoteLabel))
+        }
+        items.append(.loginItem(enabled: loginItemEnabled))
+        separator()
+        items.append(.quit)
+        return items
+    }
+}

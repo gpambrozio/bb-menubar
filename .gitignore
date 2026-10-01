@@ -1,0 +1,7 @@
+node_modules/
+release/
+assets/generated/
+BBIconPackage/.build/
+BBIconPackage/.swiftpm/
+.DS_Store
+BBIconPackage/Sources/BBIcon/Resources/TrayIcons/*.png

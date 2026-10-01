@@ -1,0 +1,162 @@
+[
+  {
+    "id": "proj_fx00000001",
+    "kind": "standard",
+    "name": "web-app",
+    "gitRemoteUrl": null,
+    "createdAt": 1790752961747,
+    "updatedAt": 1790752961747,
+    "sources": [
+      {
+        "id": "src_nrh7xjd8nj",
+        "projectId": "proj_fx00000001",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/web-app",
+        "isDefault": true,
+        "createdAt": 1790752961747,
+        "updatedAt": 1790752961747
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000004",
+    "kind": "standard",
+    "name": "api",
+    "gitRemoteUrl": "git@github.com:example/api.git",
+    "createdAt": 1790718345517,
+    "updatedAt": 1790718345517,
+    "sources": [
+      {
+        "id": "src_vrqzf9ahjk",
+        "projectId": "proj_fx00000004",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/api",
+        "isDefault": true,
+        "createdAt": 1790718345517,
+        "updatedAt": 1790718345517
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000006",
+    "kind": "standard",
+    "name": "bb-plugins",
+    "gitRemoteUrl": "git@github.com:example/bb-plugins.git",
+    "createdAt": 1790669084688,
+    "updatedAt": 1790669084689,
+    "sources": [
+      {
+        "id": "src_jd336q9jin",
+        "projectId": "proj_fx00000006",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/bb-plugins",
+        "isDefault": true,
+        "createdAt": 1790669084688,
+        "updatedAt": 1790669084688
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000008",
+    "kind": "standard",
+    "name": "design-system",
+    "gitRemoteUrl": null,
+    "createdAt": 1790740390854,
+    "updatedAt": 1790740390854,
+    "sources": [
+      {
+        "id": "src_birs4x7792",
+        "projectId": "proj_fx00000008",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/design-system",
+        "isDefault": true,
+        "createdAt": 1790740390854,
+        "updatedAt": 1790740390854
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000002",
+    "kind": "standard",
+    "name": "infra",
+    "gitRemoteUrl": null,
+    "createdAt": 1790669084869,
+    "updatedAt": 1790669084869,
+    "sources": [
+      {
+        "id": "src_h9kqrgkjj4",
+        "projectId": "proj_fx00000002",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/infra",
+        "isDefault": true,
+        "createdAt": 1790669084869,
+        "updatedAt": 1790669084869
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000003",
+    "kind": "standard",
+    "name": "docs-site",
+    "gitRemoteUrl": "git@github.com:example/docs-site.git",
+    "createdAt": 1790669084509,
+    "updatedAt": 1790669084510,
+    "sources": [
+      {
+        "id": "src_qt8v79sicj",
+        "projectId": "proj_fx00000003",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/docs-site",
+        "isDefault": true,
+        "createdAt": 1790669084509,
+        "updatedAt": 1790669084509
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000005",
+    "kind": "standard",
+    "name": "mobile",
+    "gitRemoteUrl": "git@github.com:example/mobile.git",
+    "createdAt": 1790669085049,
+    "updatedAt": 1790669085049,
+    "sources": [
+      {
+        "id": "src_gk9ny9g6bb",
+        "projectId": "proj_fx00000005",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/mobile",
+        "isDefault": true,
+        "createdAt": 1790669085049,
+        "updatedAt": 1790669085049
+      }
+    ]
+  },
+  {
+    "id": "proj_fx00000007",
+    "kind": "standard",
+    "name": "data-pipeline",
+    "gitRemoteUrl": "git@github.com:example/data-pipeline.git",
+    "createdAt": 1790669085240,
+    "updatedAt": 1790669085240,
+    "sources": [
+      {
+        "id": "src_jfkfv83ktb",
+        "projectId": "proj_fx00000007",
+        "type": "local_path",
+        "hostId": "host_fx00000001",
+        "path": "/Users/dev/code/data-pipeline",
+        "isDefault": true,
+        "createdAt": 1790669085240,
+        "updatedAt": 1790669085240
+      }
+    ]
+  }
+]

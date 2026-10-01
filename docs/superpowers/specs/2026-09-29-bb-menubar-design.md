@@ -52,10 +52,9 @@ vendored into `assets/bb-logo.svg` and rasterized by the same generator Paseo Ic
 A thread is **excluded everywhere, counts included**, when `archivedAt != null`,
 `deletedAt != null`, or `visibility == "hidden"`.
 
-A thread is **unread** when `lastReadAt == null || latestAttentionAt > lastReadAt`.
-This must be verified against bb's own unread dot during implementation (mark a thread
-read and unread with `bb thread read|unread <id>` and compare); if bb's rule differs,
-this line changes, not the buckets.
+A thread is **unread** when `(lastReadAt ?? 0) < latestAttentionAt`. This is the
+negation of bb's own read test, copied from the bb 0.44.0 web app bundle:
+`function x_(e){return(e.lastReadAt??0)>=e.latestAttentionAt}`.
 
 Each remaining thread lands in exactly one bucket, first match wins:
 
@@ -92,15 +91,24 @@ Paseo Icon's registry session), and treats bb as **running** when the file parse
 `pid` is alive, and an app with bundle id `dev.bb.desktop` is running
 (`NSWorkspace` launch/terminate notifications drive re-checks). The server URL comes
 only from this file — there is no configuration, no `BB_SERVER_URL`, no pairing.
+*Amended by `2026-09-30-bb-menubar-remote-design.md`:* the runtime file, then bb Icon's
+own bb Connect pairing — nothing else. This Mac's bb always wins; the paired remote bb is
+watched only while no local bb is running.
 
-Only the bb server that this Mac's bb.app uses is watched. A bb.app pointed at a remote
-server is out of scope for v1 (see Deferred).
+Only one bb server is watched at a time. A bb.app on this Mac pointed at a remote server
+is not followed; bb Icon pairs with that server as its own device instead (see the remote
+design).
 
 ### Snapshot
 
-- `GET {serverUrl}/api/v1/threads` → array of thread rows (the same shape
-  `bb thread list --json` prints, including `hasPendingInteraction`, `lastReadAt`,
-  `latestAttentionAt`, `queuedWork`, `runtime`, `activity`).
+- `GET {serverUrl}/api/v1/threads?archived=false&limit=200&offset=N` → array of
+  thread rows (the same shape `bb thread list --json` prints, including
+  `hasPendingInteraction`, `lastReadAt`, `latestAttentionAt`, `queuedWork`, `runtime`,
+  `activity`). Without `archived=false` the route returns archived threads too; hidden
+  threads are excluded unless `includeHidden=true` is passed. bb's route pages, and its
+  default page size is not documented, so bb Icon pages explicitly: 200 per request,
+  `offset` advancing until a short page, at most 25 pages. Reaching that ceiling adds a
+  `Not all threads shown` note — the menu never presents a subset as the whole.
 - `GET {serverUrl}/api/v1/projects` → array with `id` and `name`, for row labels.
 
 Both answer on loopback without credentials in bb 0.44.0. Decoding is lenient: unknown
@@ -117,11 +125,24 @@ URL's path; `http→ws`, `https→wss`). bb Icon does the same:
 - Every `{"type":"changed","entity":"thread"|"project",…}` message schedules a
   re-fetch of the snapshot, debounced ~250 ms so a burst of `events-appended`
   messages costs one fetch. Other message types (`plugin-signal`, …) are ignored.
-- On every (re)connect, re-fetch unconditionally — invalidations sent while
-  disconnected are lost.
+- Re-fetches start at most once per second. A running thread sends
+  `events-appended` for as long as it runs, so the debounce alone would fetch
+  back to back; a re-fetch owed sooner than a second after the previous one
+  started waits out the rest of that second. Only one fetch runs at a time, and
+  invalidations that arrive while one runs or waits cost exactly one more.
+- On every (re)connect, re-fetch unconditionally and at once, whatever the
+  once-per-second cap — invalidations sent while disconnected are lost.
 - Reconnect with bb's own `BbRealtimeClient` backoff: 1 s initial delay, ×1.5 per
-  attempt, capped at 30 s, reset on a successful open.
-  Backoff and debounce run on an injected clock so they are tested without sleeps.
+  attempt, capped at 30 s, reset on a successful open. An open counts as successful
+  once its first fetch succeeds: a bb that accepts the socket and then fails every
+  fetch (authentication, a shape this build cannot read) is retried at a growing
+  interval, not every second.
+  Backoff, debounce, and the fetch cap run on an injected clock so they are
+  tested without sleeps.
+- A socket that fails before it opens names the reason in the error row
+  (`bb live updates: …`), so a moved or refused `/ws` is not a silent
+  `reconnecting`; the next successful fetch clears it. A socket lost after it opened
+  is a bb restart and reads only as `reconnecting`.
 
 This protocol is an **unsupported surface**: `/api/v1` and `/ws` are bb internals, not
 the Plugin SDK. The app is pinned to what bb 0.44.0 does, in the same way Paseo Icon is
@@ -152,9 +173,13 @@ Start at login  ✓
 Quit bb Icon            ⌘Q
 ```
 
-- Rows show the thread's `title`, else `titleFallback`, else its short id, then the
+- Rows show the thread's `title`, else `titleFallback`, else its id, then the
   project name. Nothing else.
-- Rows keep the API's order within a section; bb Icon does not re-sort.
+- Rows within a section use bb's own chronological list order, copied from the same
+  bundle: `latestAttentionAt` descending, then `createdAt` descending, then `id`
+  ascending. (bb's list additionally floats `active` threads to the top; within a
+  section every thread shares a status class, so that step is moot here.) The API's
+  own response order is not relied on.
 - Empty sections are omitted. Each section caps at 15 rows with a visible
   `…and N more` row that opens bb. No silent caps; every row keyed by thread id.
 - The status line reads `connected`, `connecting`, `reconnecting`, or
@@ -165,23 +190,31 @@ Quit bb Icon            ⌘Q
 The icon stays. It shows the `done` glyph dimmed, no count, and the panel holds only
 the `bb is not running` line, **Open bb**, Start at login, and Quit. The rows from the
 last connection are dropped, not kept — the icon never shows data it cannot vouch for.
+The glyph is dimmed the same way while connecting or reconnecting, because the rows are
+gone then too: dimmed means "not connected", whatever the reason.
 
 ## Click-through
 
-bb.app registers no URL scheme, so there is no deep link. The bb CLI can navigate the
-desktop app: `bb thread open <id>` opens a thread "in connected BB apps".
+bb.app registers no URL scheme, so there is no deep link. bb itself can navigate its
+connected apps: `bb thread open <id>` is a thin wrapper over
+`POST {serverUrl}/api/v1/threads/<id>/open` with body `{"file":null}`, which answers
+`{"delivered": N}` — the number of connected clients the request reached. bb
+Icon calls that endpoint directly rather than spawning the CLI, so there is no Node
+subprocess, no CLI path inside the bundle to track, and no inherited `BB_THREAD_ID`
+(the CLI refuses to open a different thread when that is set).
 
 A row click:
 
-1. Resolves the running bb.app via `NSRunningApplication` (`dev.bb.desktop`) and runs
-   the CLI inside its bundle
-   (`Contents/Resources/app.asar.unpacked/node_modules/bb-app/host-daemon/dist/bb`)
-   as `bb thread open <id>`, with `BB_SERVER_URL` set to the discovered server.
-2. Activates bb.app.
+1. Activates bb.app (`dev.bb.desktop`) through `NSWorkspace`.
+2. POSTs the open request.
 
-If the CLI is missing or exits non-zero, bb.app is still activated and the failure is
-named in the error row. That `thread open` lands in the desktop window (and what it does
-with several bb windows open) must be verified before relying on it.
+A failed request, a non-2xx status, or `delivered == 0` is named in the error row
+("bb had no open window to show the thread in"). The request reaches every connected
+bb client, not only this Mac's window — the same behaviour as `bb thread open`.
+bb 0.44.0 counts every connected `/ws` socket in `delivered`, bb Icon's own realtime
+socket included, so the count overstates the windows that navigated. `delivered == 0`
+still means no window saw the click, but it only happens when nothing at all is
+connected.
 
 `…and N more` and **Open bb** only activate bb.app (launching it when not running).
 
@@ -193,17 +226,21 @@ in the app target.**
 | Path under `BBIconPackage/Sources/` | Owns |
 | --- | --- |
 | `BBIconCore/ErrorText.swift` | Ported unchanged. |
+| `BBIconCore/ClockTimer.swift` | The one timer the debounce, reconnect, and poll share, on an injected clock. |
 | `BBIconCore/Runtime/RuntimeFile.swift` | Parse `bb-app-runtime.json`. No I/O. |
 | `BBIconCore/Runtime/RuntimeSession.swift` | Watch, debounce, liveness, the "not running" state. |
-| `BBIconCore/Runtime/FSEventsWatch.swift` | Ported from Paseo Icon. |
+| `BBIconCore/Runtime/DirectoryWatcher.swift` | Keeping the `~/.bb` watch attached. Ported from Paseo Icon's `RegistryWatcher`. |
+| `BBIconCore/Runtime/FSEventsWatch.swift` | Ported from Paseo Icon, with the path filter injected. |
 | `BBIconCore/Server/APIModels.swift` | Lenient `Decodable` thread and project rows. |
-| `BBIconCore/Server/BBHTTPClient.swift` | The two GETs, over an injected transport. |
-| `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, reconnect. |
+| `BBIconCore/Server/HTTPClient.swift` | One HTTP round trip, injected; the `URLSession` one ships. |
+| `BBIconCore/Server/BBAPI.swift` | The two GETs, the open-thread request, and their failure text. |
+| `BBIconCore/Server/WebSocketTransport.swift`, `URLSessionWebSocketTransport.swift` | The socket, injected. Ported from Paseo Icon. |
+| `BBIconCore/Server/RealtimeSession.swift` | `/ws`: subscribe, invalidate, debounce, cap re-fetches, reconnect. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot and connection state. |
+| `BBIconCore/Store/ServerConnection.swift` | Server changes: stop the old session, start the new one, drop stale answers. |
 | `BBIconCore/Tray/Bucket.swift` | The bucket mapping above. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Ported: store → icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | Ported: the menu as data. |
-| `BBIconCore/Launch/OpenBB.swift` | CLI invocation and activation, runner injected. |
 | `BBIcon/TrayIcons.swift`, `MenuBarLabel.swift`, `MenuContent.swift` | Ported with renames. |
 | `BBIcon/AppCoordinator.swift`, `BBIconApp.swift` | Object graph, login item, `NSWorkspace`. |
 
@@ -218,7 +255,7 @@ stays for deterministic timer tests.
 ## Testing
 
 - **Swift Testing** on `BBIconCore`, with fakes for the file system, HTTP, WebSocket
-  transport, process runner, and clock. The bucket mapping gets a table test covering
+  transport, process liveness, and clock. The bucket mapping gets a table test covering
   every row of the rule list, including unknown status and background activity.
 - **Fixtures** recorded from a real bb 0.44.0: a `/api/v1/threads` and
   `/api/v1/projects` response and a stream of `/ws` messages, anonymised.
@@ -243,10 +280,15 @@ Names: display name **bb Icon**, bundle `BBIcon.app`, bundle id
 
 ## Deferred
 
-- Signing, notarization, dmg, and the Homebrew cask (copy Paseo Icon's pipeline once
-  the app works).
-- A bb.app connected to a **remote** bb server (bb Connect): needs the auth handshake
-  and a server URL the runtime file may not carry.
+Watching a **remote** bb server (bb Connect) was deferred here; it has moved to
+`2026-09-30-bb-menubar-remote-design.md`, which pairs bb Icon with one remote server
+through a machine code. What that design still defers is listed there.
+
+- The dmg and the Homebrew cask (copy Paseo Icon's pipeline). Signing and notarization
+  are done: `npm run dist -- --identity "Developer ID Application: …"`.
 - Several bb servers at once.
 - Resolving `@project:`/`@thread:` mention tokens in titles the way bb's sidebar does.
 - Keyboard navigation in the panel (a known gap inherited from Paseo Icon).
+- Post-open liveness on `/ws`: a bb that hangs while alive keeps the socket open, and
+  the tray keeps showing its last snapshot as `connected`. A periodic ping (or a
+  bounded silence timer) would detect it.
