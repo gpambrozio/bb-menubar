@@ -232,5 +232,9 @@ running the app. Say so plainly rather than narrating a check you did not perfor
   it from bb's sources. The answers for a revoked pairing were seen on 2026-09-30 and match
   the design's table.
 - One pairing per Mac, one server at a time. Several remote servers are deferred.
-- No release is published yet. `npm run dist` builds unsigned unless given a signing
-  identity; every build is `arm64` only, with no auto-updater.
+- Releases are cut by hand. v0.1.0 is published at
+  https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0. To cut one: tag `vX.Y.Z`
+  on `main`, run `npm run dist` with the Developer ID identity, zip the app with
+  `ditto -c -k --sequesterRsrc --keepParent release/native/BBIcon.app BBIcon-X.Y.Z.zip`,
+  and `gh release create vX.Y.Z BBIcon-X.Y.Z.zip`. Without an identity `npm run dist`
+  builds unsigned; every build is `arm64` only, with no auto-updater.

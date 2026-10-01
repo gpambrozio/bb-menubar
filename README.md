@@ -95,7 +95,13 @@ One remote bb at a time.
 
 ## Install
 
-There is no published release yet. Build the app from a clone:
+Download `BBIcon-0.1.0.zip` from the
+[v0.1.0 release](https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0),
+unzip it, and drag `BBIcon.app` into `/Applications`. It is signed and
+notarized, so it opens on any Mac without a Gatekeeper prompt. It needs macOS
+14 or later on Apple Silicon.
+
+Or build the app from a clone:
 
 ```bash
 npm install
