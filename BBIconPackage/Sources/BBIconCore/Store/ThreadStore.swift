@@ -185,6 +185,8 @@ public final class ThreadStore {
         )
         guard next != state else { return }
         state = next
-        for listener in listeners.values { listener() }
+        // Looked up as it is reached, so a listener removed by an earlier
+        // one in this round is not called.
+        for id in Array(listeners.keys) { listeners[id]?() }
     }
 }

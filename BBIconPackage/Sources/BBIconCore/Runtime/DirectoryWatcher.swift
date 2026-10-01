@@ -19,6 +19,11 @@ public final class DirectoryWatcher {
     private var notify: (() -> Void)?
     private var detach: (() -> Void)?
     private var resolving = false
+    /// Numbers each watch opened, and is bumped again when that watch dies or
+    /// is detached, so a callback from a watch that is no longer the current
+    /// one — a late error, or one fired while `open` was still running — is
+    /// ignored rather than dropping its successor.
+    private var attachment = 0
 
     public init(resolveDir: @escaping () async throws -> String, open: @escaping Open) {
         self.resolveDir = resolveDir
@@ -32,6 +37,7 @@ public final class DirectoryWatcher {
         return { [weak self] in
             guard let self else { return }
             self.notify = nil
+            self.attachment += 1
             let current = self.detach
             self.detach = nil
             current?()
@@ -49,9 +55,14 @@ public final class DirectoryWatcher {
                 let dir = try await self.resolveDir()
                 self.resolving = false
                 guard self.notify != nil, self.detach == nil else { return }
-                self.detach = try self.open(
+                self.attachment += 1
+                let attachment = self.attachment
+                let opened = try self.open(
                     dir,
-                    { [weak self] in self?.notify?() },
+                    { [weak self] in
+                        guard let self, attachment == self.attachment else { return }
+                        self.notify?()
+                    },
                     // The watch died, usually because the directory was
                     // deleted or replaced. Forget it so the next
                     // ensureAttached opens a fresh one, and report it as a
@@ -59,11 +70,19 @@ public final class DirectoryWatcher {
                     // file, and the read it triggers is also what re-attaches,
                     // instead of waiting for the poll.
                     { [weak self] in
-                        guard let self else { return }
+                        guard let self, attachment == self.attachment else { return }
+                        self.attachment += 1
                         self.detach = nil
                         self.notify?()
                     }
                 )
+                // It died, or was detached, before `open` returned: stop it,
+                // as every opened watch must be, and keep nothing.
+                guard attachment == self.attachment else {
+                    opened()
+                    return
+                }
+                self.detach = opened
             } catch {
                 // The directory does not exist yet, or vanished between
                 // resolution and open. Nothing is attached; the next read tries again.

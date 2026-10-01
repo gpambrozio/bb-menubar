@@ -32,7 +32,13 @@ struct DirectoryWatcherTests {
         /// Built after the stored properties so the callbacks can capture self.
         private(set) var watcher: DirectoryWatcher?
 
-        init(resolveDir: @escaping () async throws -> String, openThrows: ((Int) -> Bool)? = nil) {
+        /// `failsDuringOpen` makes that attempt's watch report its death
+        /// before `open` returns.
+        init(
+            resolveDir: @escaping () async throws -> String,
+            openThrows: ((Int) -> Bool)? = nil,
+            failsDuringOpen: ((Int) -> Bool)? = nil
+        ) {
             watcher = DirectoryWatcher(
                 resolveDir: { [weak self] in
                     self?.probes += 1
@@ -49,6 +55,7 @@ struct DirectoryWatcherTests {
                     }
                     let call = OpenCall(dir: dir, fire: onChange, fail: onError)
                     self.opens.append(call)
+                    if failsDuringOpen?(attempt) == true { onError() }
                     return { call.closed = true }
                 }
             )
@@ -166,6 +173,46 @@ struct DirectoryWatcherTests {
         try h.ensureAttached()
         await settle(until: { h.opens.count == 2 })
         #expect(h.opens.count == 2)
+    }
+
+    @Test("a late error from a watch already replaced leaves its successor attached")
+    func lateErrorFromReplacedWatch() async throws {
+        let h = Harness(resolveDir: { "/home/.bb" })
+        _ = try h.watch { h.changes += 1 }
+        await settle(until: { h.opens.count == 1 })
+        h.opens[0].fail()
+        try h.ensureAttached()
+        await settle(until: { h.opens.count == 2 })
+        try #require(h.opens.count == 2)
+
+        // The first watch's error arrives again, late.
+        h.opens[0].fail()
+        #expect(h.changes == 1)
+        try h.ensureAttached()
+        await settle()
+        #expect(h.opens.count == 2, "the second watch was dropped and a third opened beside it")
+        #expect(!h.opens[1].closed)
+        // Nor does a change from the replaced watch count.
+        h.opens[0].fire()
+        #expect(h.changes == 1)
+        h.opens[1].fire()
+        #expect(h.changes == 2)
+    }
+
+    @Test("a watch that dies while open runs is stopped, not kept, and reported")
+    func errorDuringOpen() async throws {
+        let h = Harness(resolveDir: { "/home/.bb" }, failsDuringOpen: { $0 == 1 })
+        _ = try h.watch { h.changes += 1 }
+        await settle(until: { h.opens.count == 1 })
+        try #require(h.opens.count == 1)
+        #expect(h.changes == 1)
+        #expect(h.opens[0].closed, "every opened watch must be stopped")
+
+        // Not counted as attached: the next read opens a fresh one.
+        try h.ensureAttached()
+        await settle(until: { h.opens.count == 2 })
+        try #require(h.opens.count == 2, "the dead watch was kept as attached")
+        #expect(!h.opens[1].closed)
     }
 
     @Test("a watch that dies after detach reports nothing")

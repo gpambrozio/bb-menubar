@@ -105,6 +105,25 @@ struct ThreadStoreTests {
         #expect(notifications == 1)
     }
 
+    @Test("a listener removed by another in the same round is not called")
+    func unsubscribedMidRound() {
+        let store = ThreadStore()
+        var calls = 0
+        // Each removes the other: whichever runs first, the second is gone.
+        var removeA: (() -> Void)?
+        var removeB: (() -> Void)?
+        removeA = store.subscribe {
+            calls += 1
+            removeB?()
+        }
+        removeB = store.subscribe {
+            calls += 1
+            removeA?()
+        }
+        store.setStatus(.connecting)
+        #expect(calls == 1)
+    }
+
     @Test("orders errors by source, whatever order they were set in")
     func errorsOrderedBySource() {
         let store = ThreadStore()
