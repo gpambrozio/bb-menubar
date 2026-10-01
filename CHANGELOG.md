@@ -7,7 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
-## [0.1.0] — Unreleased
+## [0.1.0] — 2026-09-30
 
 The first version. bb Icon puts a small icon in your Mac's menu bar that tells you,
 at a glance, whether any of your bb threads needs you.
@@ -48,12 +48,11 @@ app.**
 
 ### Known limitations
 
-- There is no published download yet; you build the app yourself. A build
-  that is not signed and notarized is blocked the first time it is opened on
-  another Mac, until you allow it in System Settings → Privacy & Security.
 - Clicking a thread from a remote bb opens it in every bb app connected to that
   bb, on every Mac and phone, not only on this Mac.
 - Only one remote bb can be watched at a time.
 - Forgetting a remote bb leaves bb Icon listed as a device at
   getbb.app/dashboard until you remove it there.
 - The menu cannot be navigated with the keyboard.
+
+[0.1.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0
