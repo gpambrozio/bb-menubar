@@ -58,11 +58,10 @@ bb Connect at `https://<name>.getbb.app`, this Mac has no bb server of its own
 and bb Icon says **bb is not running**. Pair it with that server instead:
 
 1. Get a machine code from the bb you want to watch. In any bb window, open
-   **Settings → Remote access → Add mobile device**. Or, on the Mac running the
-   bb server, run:
+   **Settings → Mobile → Add mobile device**. Or, on the Mac running the bb
+   server, run:
 
    ```bash
-   bb settings experiment mobileApp true
    bb connect machine-code
    ```
 

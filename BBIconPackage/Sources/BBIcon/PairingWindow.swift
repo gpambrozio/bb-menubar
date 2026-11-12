@@ -125,8 +125,8 @@ private struct PairingView: View {
     /// read as code; selectable, so they can be copied.
     private static let instructions: LocalizedStringKey = """
         Enter a machine code from the bb you want to watch. In any bb window, open \
-        Settings → Remote access → Add mobile device; or, on the Mac running bb, run \
-        `bb settings experiment mobileApp true` and then `bb connect machine-code`. \
+        Settings → Mobile → Add mobile device; or, on the Mac running bb, run \
+        `bb connect machine-code`. \
         Codes last 10 minutes and work once.
         """
 
