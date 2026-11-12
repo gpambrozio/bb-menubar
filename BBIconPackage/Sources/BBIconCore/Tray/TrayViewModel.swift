@@ -1,7 +1,10 @@
 import Foundation
 
 /// The tray icon is always one bucket's icon: the highest-priority non-empty
-/// one, or `done` (the bb mark) when there are no threads at all.
+/// one, or `done` (the bb mark) when there are no threads at all. Working
+/// counts as non-empty only while one of its threads is running something now
+/// (`BucketRule.isRunningNow`), so threads waiting on offline machines do not
+/// spin the glyph.
 public typealias TrayIconState = ThreadBucket
 
 public struct TrayThreadRow: Equatable, Sendable, Identifiable {
@@ -10,6 +13,15 @@ public struct TrayThreadRow: Equatable, Sendable, Identifiable {
     public let label: String
     /// The project's name, or its id when bb did not list it.
     public let projectName: String
+    /// The thread's machine is offline: see `BucketRule.isWaitingForHost`.
+    public let machineOffline: Bool
+
+    init(threadId: String, label: String, projectName: String, machineOffline: Bool = false) {
+        self.threadId = threadId
+        self.label = label
+        self.projectName = projectName
+        self.machineOffline = machineOffline
+    }
 
     // One bb server, so the thread id alone is unique. Paseo Icon needed a
     // composite host-and-workspace id here; bb Icon has no hosts to collide.
@@ -134,10 +146,15 @@ public enum TrayViewModelBuilder {
 
         var threadsByBucket: [ThreadBucket: [ThreadRow]] = [:]
         var counted = 0
+        // Whether the Working section may draw the glyph. Every thread in it
+        // is decided on, the capped ones too, so the glyph never depends on
+        // which fifteen are shown.
+        var workingRunsNow = false
         for thread in state.threads where BucketRule.isIncluded(thread) {
             let bucket = BucketRule.bucket(for: thread)
             threadsByBucket[bucket, default: []].append(thread)
             if countedBuckets.contains(bucket) { counted += 1 }
+            if bucket == .working && BucketRule.isRunningNow(thread) { workingRunsNow = true }
         }
 
         let sections = sectionOrder.compactMap { bucket -> TrayMenuSection? in
@@ -159,9 +176,11 @@ public enum TrayViewModelBuilder {
 
         return TrayViewModel(
             // `sections` is already in sectionOrder and holds only non-empty
-            // buckets, so its first entry is the highest-priority one. No
-            // threads at all falls back to `done`, the resting state.
-            icon: sections.first?.bucket ?? .done,
+            // buckets, so its first entry is the highest-priority one — but a
+            // Working section of threads waiting on offline machines is
+            // passed over, and the next one draws. No threads at all, or none
+            // past it, falls back to `done`, the resting state.
+            icon: sections.first { $0.bucket != .working || workingRunsNow }?.bucket ?? .done,
             count: counted,
             sections: sections,
             status: state.status,
@@ -186,7 +205,8 @@ public enum TrayViewModelBuilder {
             label: displayTitle(t),
             // A project bb did not list, or listed without a name, shows its
             // id rather than an empty half of the row.
-            projectName: nonBlank(projectNames[t.projectId]) ?? t.projectId
+            projectName: nonBlank(projectNames[t.projectId]) ?? t.projectId,
+            machineOffline: BucketRule.isWaitingForHost(t)
         )
     }
 

@@ -21,7 +21,7 @@ public enum BucketRule {
         t.archivedAt == nil && t.deletedAt == nil && t.visibility != "hidden"
     }
 
-    /// The negation of bb 0.44.0's read test,
+    /// The negation of bb 0.49.0's read test,
     /// `(e.lastReadAt??0)>=e.latestAttentionAt`. A thread never opened has no
     /// `lastReadAt` and reads as unread; equal timestamps read as read.
     public static func isUnread(_ t: ThreadRow) -> Bool {
@@ -37,6 +37,24 @@ public enum BucketRule {
         if isRunning(t.status) || t.activity.isBusy { return .working }
         // Idle-and-read and error-and-read both land here.
         return .done
+    }
+
+    /// The thread's machine is offline: bb keeps its `status` at `active`
+    /// until the machine reconnects, but nothing runs for it meanwhile. It
+    /// stays in Working by rule 4, and its row says the machine is offline.
+    public static func isWaitingForHost(_ t: ThreadRow) -> Bool {
+        t.runtime.isWaitingForHost
+    }
+
+    /// Whether a Working thread is running something now, which is what lets
+    /// it draw the Working glyph. bb 0.49.0's own rule
+    /// (`RUNNING_RUNTIME_STATUSES` and `isThreadWorking` in the Plugin SDK's
+    /// `thread-status.ts`) counts a thread as working when its runtime is
+    /// running or it has background activity, and does not count
+    /// `waiting-for-host` as running. So a thread waiting for its machine
+    /// draws the glyph only through its activity counts.
+    public static func isRunningNow(_ t: ThreadRow) -> Bool {
+        (isRunning(t.status) && !isWaitingForHost(t)) || t.activity.isBusy
     }
 
     /// bb's chronological list order: `latestAttentionAt` descending, then

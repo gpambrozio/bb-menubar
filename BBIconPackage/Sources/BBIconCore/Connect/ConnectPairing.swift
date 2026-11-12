@@ -1,7 +1,7 @@
 import Foundation
 
 /// Why pairing did not happen. The first four are about what was pasted; the
-/// rest are getbb.app's answer, named as bb 0.44.0's own client names them
+/// rest are getbb.app's answer, named as bb 0.49.0's own client names them
 /// (`codeForStatus` in `packages/connect-client/src/redeem-machine.ts`), in
 /// the words of the design's pairing table.
 ///
@@ -125,7 +125,7 @@ public enum ConnectPairing {
         return pairing
     }
 
-    /// bb 0.44.0's `codeForStatus`, in the same order.
+    /// bb 0.49.0's `codeForStatus`, in the same order.
     static func refusal(status: Int, wireError: String) -> ConnectPairingError {
         if wireError == "machine-limit" { return .machineLimit }
         if wireError == "already-used" || status == 409 { return .alreadyUsed }

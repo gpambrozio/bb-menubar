@@ -1,6 +1,9 @@
 # bb Icon — a macOS menu-bar indicator for bb
 
-Date: 2026-09-29. Status: **approved design, pending spec review.**
+Date: 2026-09-29. Status: **approved design, pending spec review.** Amended 2026-11-12
+for bb 0.49.0: the pin moves to 0.49.0, and a thread whose machine is offline stays in
+Working with a `machine offline` note but no longer spins the Working glyph by itself
+(bucket rule 4, the icon rule, and the menu rows).
 
 bb Icon is a macOS menu-bar indicator for [bb](https://getbb.app) threads. It shows
 whether any thread needs you, and opens a thread in the bb desktop app on click. It is a
@@ -54,7 +57,8 @@ A thread is **excluded everywhere, counts included**, when `archivedAt != null`,
 
 A thread is **unread** when `(lastReadAt ?? 0) < latestAttentionAt`. This is the
 negation of bb's own read test, copied from the bb 0.44.0 web app bundle:
-`function x_(e){return(e.lastReadAt??0)>=e.latestAttentionAt}`.
+`function x_(e){return(e.lastReadAt??0)>=e.latestAttentionAt}`. bb 0.49.0's bundle has the
+same test under another name: `function bh(e){return(e.lastReadAt??0)>=e.latestAttentionAt}`.
 
 Each remaining thread lands in exactly one bucket, first match wins:
 
@@ -62,7 +66,7 @@ Each remaining thread lands in exactly one bucket, first match wins:
 2. `status == "error"` and unread → **Failed**
 3. `status == "idle"` and unread → **Ready to review**
 4. `status ∈ {starting, active, stopping, pending}`, or any `activity.*Count > 0`
-   → **Working**
+   → **Working**. This includes a thread whose machine is offline (below).
 5. otherwise → **Done** (includes idle-and-read and error-and-read)
 
 An unknown `status` value is treated as `idle`, as the bb SDK instructs its own
@@ -70,7 +74,24 @@ consumers. This mapping is the one place bb Icon derives state; bb exposes its o
 resolved per-thread indicator only to plugin UI, never over its HTTP API. The mapping
 is a single pure function with its own test table.
 
+**A thread whose machine is offline.** Since bb 0.45 a disconnected machine no longer
+interrupts its threads, so a thread whose machine went offline mid-turn keeps
+`status: "active"` until the machine reconnects, and bb reports
+`runtime.displayStatus: "waiting-for-host"` for it (`resolveThreadRuntimeStateFromLatestSession`
+in bb 0.49.0's `apps/server/src/services/threads/thread-runtime-display.ts`). `runtime` is
+decoded leniently: absent, or any other `displayStatus`, changes nothing. Such a thread
+stays in **Working** by rule 4 — it will resume when its machine comes back — and its row
+says `machine offline`. It is not *running*, though: bb 0.49.0's own rule
+(`RUNNING_RUNTIME_STATUSES` and `isThreadWorking` in the Plugin SDK's
+`src/internal/thread-status.ts`) counts `waiting-for-host` as not running, and still counts
+background activity. So a Working thread **runs now** when its `status` is one of rule 4's
+and it is not waiting for its host, or when any `activity.*Count > 0`.
+
 **Icon:** the glyph of the highest-priority non-empty bucket; with no threads, `done`.
+Working counts as non-empty here only while at least one of its threads runs now, the
+threads past the 15-row cap included; otherwise it is passed over, and the next non-empty
+bucket draws (or `done`). A laptop asleep mid-turn therefore does not keep the pinwheel
+spinning all night, while its thread stays listed.
 **Count:** threads in Needs input + Failed + Ready to review, shown beside the glyph and
 hidden when zero. Working and Done are never counted — same reasoning as Paseo Icon.
 
@@ -83,7 +104,7 @@ bb.app writes `~/.bb/bb-app-runtime.json` while it runs:
 ```json
 { "entryPath": "…/bb-app-bridge.mjs", "pid": 16746,
   "serverUrl": "http://127.0.0.1:38886", "startedAt": "…",
-  "surface": "desktop", "version": "0.44.0" }
+  "surface": "desktop", "version": "0.49.0" }
 ```
 
 bb Icon reads it, watches it with FSEvents (the same watch-and-debounce machinery as
@@ -111,7 +132,7 @@ design).
   `Not all threads shown` note — the menu never presents a subset as the whole.
 - `GET {serverUrl}/api/v1/projects` → array with `id` and `name`, for row labels.
 
-Both answer on loopback without credentials in bb 0.44.0. Decoding is lenient: unknown
+Both answer on loopback without credentials in bb 0.49.0. Decoding is lenient: unknown
 fields are ignored, unknown enum values map to a documented default, and one thread
 that fails to decode is dropped and named in the error row — it never costs the rest.
 
@@ -145,7 +166,7 @@ URL's path; `http→ws`, `https→wss`). bb Icon does the same:
   is a bb restart and reads only as `reconnecting`.
 
 This protocol is an **unsupported surface**: `/api/v1` and `/ws` are bb internals, not
-the Plugin SDK. The app is pinned to what bb 0.44.0 does, in the same way Paseo Icon is
+the Plugin SDK. The app is pinned to what bb 0.49.0 does, in the same way Paseo Icon is
 pinned to the Paseo wire and registry. When bb changes them, the failure must name
 itself: HTTP 401/403 → "bb now requires authentication", a decode failure names the
 field, a WebSocket close is a reconnecting state, not silence.
@@ -174,7 +195,8 @@ Quit bb Icon            ⌘Q
 ```
 
 - Rows show the thread's `title`, else `titleFallback`, else its id, then the
-  project name. Nothing else.
+  project name, then `machine offline` when the thread is waiting for its host
+  (`Refactor terminal input  ·  web-app  ·  machine offline`). Nothing else.
 - Rows within a section use bb's own chronological list order, copied from the same
   bundle: `latestAttentionAt` descending, then `createdAt` descending, then `id`
   ascending. (bb's list additionally floats `active` threads to the top; within a
@@ -211,7 +233,7 @@ A row click:
 A failed request, a non-2xx status, or `delivered == 0` is named in the error row
 ("bb had no open window to show the thread in"). The request reaches every connected
 bb client, not only this Mac's window — the same behaviour as `bb thread open`.
-bb 0.44.0 counts every connected `/ws` socket in `delivered`, bb Icon's own realtime
+bb 0.49.0 counts every connected `/ws` socket in `delivered`, bb Icon's own realtime
 socket included, so the count overstates the windows that navigated. `delivered == 0`
 still means no window saw the click, but it only happens when nothing at all is
 connected.
@@ -256,9 +278,14 @@ stays for deterministic timer tests.
 
 - **Swift Testing** on `BBIconCore`, with fakes for the file system, HTTP, WebSocket
   transport, process liveness, and clock. The bucket mapping gets a table test covering
-  every row of the rule list, including unknown status and background activity.
+  every row of the rule list, including unknown status, background activity, and a
+  thread waiting for its host.
 - **Fixtures** recorded from a real bb 0.44.0: a `/api/v1/threads` and
-  `/api/v1/projects` response and a stream of `/ws` messages, anonymised.
+  `/api/v1/projects` response and a stream of `/ws` messages, anonymised. The thread page
+  was brought to bb 0.49.0's shape against a live 0.49.0, and the one `/ws` frame that
+  carries thread fields against 0.49.0's sources (`parentNotifications` added;
+  `activity.activeGoalCount` and `runtime.hostReconnectGraceExpiresAt` removed); the
+  project list is unchanged.
 - **vitest** for `scripts/` (icon generator, bundler), as in Paseo Icon.
 - An opt-in live test against the developer's running bb (loopback), skipped by
   default.

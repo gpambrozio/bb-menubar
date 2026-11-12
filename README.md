@@ -48,7 +48,7 @@ that goes wrong is named in its own row rather than hidden.
 - An Apple Silicon Mac. Builds are `arm64` only.
 
 bb Icon talks to parts of bb that are not a published API. It is built against
-bb 0.44.0; a later bb may change them, and when it does bb Icon names the
+bb 0.49.0; a later bb may change them, and when it does bb Icon names the
 failure in its menu rather than going quiet.
 
 ## Watching bb on another Mac

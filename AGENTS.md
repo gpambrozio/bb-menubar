@@ -53,7 +53,7 @@ agent can see gets tested at all.
 | `BBIconCore/Connect/PairingController.swift` | The pairing's life: the launch-time load, pair, Forget — their order, the `.pairing` row, the races between them (a stale load, a Forget during a save), the getbb.app/dashboard pointer for any pairing that is dropped, and whether one is under way. Keychain calls go through an injected executor, off the main thread. |
 | `BBIconCore/Store/ThreadStore.swift` | The latest snapshot, connection state, the remote server's name and the paired handle, and the error rows (`ErrorSource`; `.pairing` is a Keychain failure, owned by `PairingController`). |
 | `BBIconCore/Store/ServerConnection.swift` | Which server — this Mac's bb, else the pairing — its realtime session and API, the order of a server change, the relay probe for a failing remote, which open-thread answer may land, and scrubbing a remote credential out of every `.fetch` and `.open` row. |
-| `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, and bb's list order. Pure. |
+| `BBIconCore/Tray/Bucket.swift` | The bucket rule, the unread test, the running test, and bb's list order. Pure. |
 | `BBIconCore/Tray/TrayViewModel.swift` | Store state to icon, count, sections. |
 | `BBIconCore/Tray/MenuModel.swift` | The menu as data. Every row, label, and rule. |
 | `BBIcon/TrayIcons.swift` | The five bucket glyphs as template images, from the bundle `ResourceBundleLocator` finds. |
@@ -69,7 +69,7 @@ into `BBIconCore` instead.
 
 ## Critical rules
 
-- **`/api/v1` and `/ws` are unsupported surfaces, pinned to bb 0.44.0.** They are bb
+- **`/api/v1` and `/ws` are unsupported surfaces, pinned to bb 0.49.0.** They are bb
   internals, not the Plugin SDK, and bb may change them in any release. Decoding is lenient
   (unknown fields ignored, unknown status reads as idle, one bad row is dropped and named),
   and every other break must name itself in the menu: HTTP 401/403 says bb now requires
@@ -82,12 +82,15 @@ into `BBIconCore` instead.
   live test, not in bb's sources; a refusal or an answer that is not the expected cookie is
   named, never guessed around. When bb Icon goes quiet after a bb update, that is a bug here, not an
   acceptable failure mode.
-- **The unread rule and the list order are copied from bb's bundle, not invented.** Unread
-  is `(lastReadAt ?? 0) < latestAttentionAt`, the negation of bb 0.44.0's own read test
+- **The unread rule, the list order, and the running test are copied from bb, not invented.** Unread
+  is `(lastReadAt ?? 0) < latestAttentionAt`, the negation of bb 0.49.0's own read test
   (`(e.lastReadAt??0)>=e.latestAttentionAt`). Rows within a section sort by
   `latestAttentionAt` descending, then `createdAt` descending, then `id` ascending, as bb's
-  list does. Both live in `Tray/Bucket.swift`. If bb changes either, copy the new one from
-  its bundle and cite it; do not improve on it.
+  list does. A Working thread whose `runtime.displayStatus` is `waiting-for-host` (its
+  machine is offline) is not running, as bb 0.49.0's `RUNNING_RUNTIME_STATUSES` says: it
+  keeps its Working row, marked `machine offline`, but draws the Working glyph only through
+  background activity. All three live in `Tray/Bucket.swift`. If bb changes any of them,
+  copy the new one from its bundle or sources and cite it; do not improve on it.
 - **The runtime file, then the pairing — nothing else.** `~/.bb/bb-app-runtime.json`,
   written by bb.app (`dev.bb.desktop`) while it runs, names this Mac's bb, and it always
   wins. Only while no local bb is running does bb Icon watch the one remote bb it is paired
@@ -116,7 +119,7 @@ into `BBIconCore` instead.
   exactly the spec's "Say what Paseo Icon says" table. The bucket mapping is the one place
   this app derives state; keep it a single pure function with its table test.
 - **`delivered` counts every `/ws` client, bb Icon's own included.** The open endpoint
-  answers `{"delivered": N}`, and bb 0.44.0 counts every connected `/ws` socket — the tray's
+  answers `{"delivered": N}`, and bb 0.49.0 counts every connected `/ws` socket — the tray's
   realtime socket among them. So `delivered` overstates the windows that navigated;
   `delivered == 0` still means no window saw the click, but only when nothing at all is
   connected. Do not read a positive count as proof a bb window opened the thread.

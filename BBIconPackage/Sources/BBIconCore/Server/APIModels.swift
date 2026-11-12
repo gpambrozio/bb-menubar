@@ -1,6 +1,6 @@
 import Foundation
 
-// The slice of bb 0.44.0's `/api/v1/threads` and `/api/v1/projects` rows this
+// The slice of bb 0.49.0's `/api/v1/threads` and `/api/v1/projects` rows this
 // app reads. These routes are bb internals, not the Plugin SDK, so decoding is
 // lenient by design: unknown fields are ignored, an unknown status reads as
 // idle, and a key bb may omit falls back to a documented default. A row that
@@ -29,44 +29,61 @@ extension ThreadStatus: Decodable {
 public struct ThreadActivity: Decodable, Equatable, Sendable {
     public let activeBackgroundAgentCount: Int
     public let activeBackgroundCommandCount: Int
-    public let activeGoalCount: Int
     public let activePlanModeCount: Int
     public let activeWorkflowCount: Int
 
     public static let zero = ThreadActivity()
 
     public var isBusy: Bool {
-        activeBackgroundAgentCount > 0 || activeBackgroundCommandCount > 0 || activeGoalCount > 0
-            || activePlanModeCount > 0 || activeWorkflowCount > 0
+        activeBackgroundAgentCount > 0 || activeBackgroundCommandCount > 0 || activePlanModeCount > 0
+            || activeWorkflowCount > 0
     }
 
     public init(
         activeBackgroundAgentCount: Int = 0,
         activeBackgroundCommandCount: Int = 0,
-        activeGoalCount: Int = 0,
         activePlanModeCount: Int = 0,
         activeWorkflowCount: Int = 0
     ) {
         self.activeBackgroundAgentCount = activeBackgroundAgentCount
         self.activeBackgroundCommandCount = activeBackgroundCommandCount
-        self.activeGoalCount = activeGoalCount
         self.activePlanModeCount = activePlanModeCount
         self.activeWorkflowCount = activeWorkflowCount
     }
 
     private enum CodingKeys: String, CodingKey {
-        case activeBackgroundAgentCount, activeBackgroundCommandCount, activeGoalCount
-        case activePlanModeCount, activeWorkflowCount
+        case activeBackgroundAgentCount, activeBackgroundCommandCount, activePlanModeCount
+        case activeWorkflowCount
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         activeBackgroundAgentCount = try c.decodeIfPresent(Int.self, forKey: .activeBackgroundAgentCount) ?? 0
         activeBackgroundCommandCount = try c.decodeIfPresent(Int.self, forKey: .activeBackgroundCommandCount) ?? 0
-        activeGoalCount = try c.decodeIfPresent(Int.self, forKey: .activeGoalCount) ?? 0
         activePlanModeCount = try c.decodeIfPresent(Int.self, forKey: .activePlanModeCount) ?? 0
         activeWorkflowCount = try c.decodeIfPresent(Int.self, forKey: .activeWorkflowCount) ?? 0
     }
+}
+
+/// What bb shows a thread doing, which can differ from its `status`. Since bb
+/// 0.45 a thread whose machine went offline keeps `status: "active"` until the
+/// machine reconnects, and bb shows it as `waiting-for-host`
+/// (`resolveThreadRuntimeStateFromLatestSession` in bb 0.49.0's
+/// `thread-runtime-display.ts`). That is the only value this app reads; any
+/// other, and a row with no `runtime`, changes nothing.
+public struct ThreadRuntime: Decodable, Equatable, Sendable {
+    /// bb's `runtime.displayStatus`, kept as sent. Nil when bb omits it.
+    public let displayStatus: String?
+
+    public static let unknown = ThreadRuntime()
+
+    public init(displayStatus: String? = nil) {
+        self.displayStatus = displayStatus
+    }
+
+    /// The thread's machine is offline, so nothing is running for it now,
+    /// whatever its `status` says.
+    public var isWaitingForHost: Bool { displayStatus == "waiting-for-host" }
 }
 
 /// One row of `GET /api/v1/threads`: the fields the bucket rule, the list
@@ -87,6 +104,7 @@ public struct ThreadRow: Decodable, Equatable, Sendable {
     public let createdAt: Double
     public let hasPendingInteraction: Bool
     public let activity: ThreadActivity
+    public let runtime: ThreadRuntime
 
     public init(
         id: String,
@@ -101,7 +119,8 @@ public struct ThreadRow: Decodable, Equatable, Sendable {
         latestAttentionAt: Double,
         createdAt: Double,
         hasPendingInteraction: Bool = false,
-        activity: ThreadActivity = .zero
+        activity: ThreadActivity = .zero,
+        runtime: ThreadRuntime = .unknown
     ) {
         self.id = id
         self.projectId = projectId
@@ -116,11 +135,12 @@ public struct ThreadRow: Decodable, Equatable, Sendable {
         self.createdAt = createdAt
         self.hasPendingInteraction = hasPendingInteraction
         self.activity = activity
+        self.runtime = runtime
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, titleFallback, status, visibility, archivedAt, deletedAt
-        case lastReadAt, latestAttentionAt, createdAt, hasPendingInteraction, activity
+        case lastReadAt, latestAttentionAt, createdAt, hasPendingInteraction, activity, runtime
     }
 
     public init(from decoder: any Decoder) throws {
@@ -138,6 +158,7 @@ public struct ThreadRow: Decodable, Equatable, Sendable {
         createdAt = try c.decode(Double.self, forKey: .createdAt)
         hasPendingInteraction = try c.decodeIfPresent(Bool.self, forKey: .hasPendingInteraction) ?? false
         activity = try c.decodeIfPresent(ThreadActivity.self, forKey: .activity) ?? .zero
+        runtime = try c.decodeIfPresent(ThreadRuntime.self, forKey: .runtime) ?? .unknown
     }
 }
 

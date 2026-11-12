@@ -14,6 +14,7 @@
     "originKind": null,
     "originPluginId": null,
     "visibility": "visible",
+    "parentNotifications": "auto",
     "archivedAt": null,
     "pinnedAt": null,
     "deletedAt": null,
@@ -24,7 +25,6 @@
     "activity": {
       "activeBackgroundAgentCount": 1,
       "activeBackgroundCommandCount": 0,
-      "activeGoalCount": 0,
       "activePlanModeCount": 0,
       "activeWorkflowCount": 0
     },
@@ -39,8 +39,7 @@
     "environmentWorkspaceDisplayKind": "other",
     "hasPendingInteraction": false,
     "runtime": {
-      "displayStatus": "active",
-      "hostReconnectGraceExpiresAt": null
+      "displayStatus": "active"
     }
   },
   {
@@ -58,6 +57,7 @@
     "originKind": null,
     "originPluginId": null,
     "visibility": "visible",
+    "parentNotifications": "auto",
     "archivedAt": null,
     "pinnedAt": null,
     "deletedAt": null,
@@ -68,7 +68,6 @@
     "activity": {
       "activeBackgroundAgentCount": 0,
       "activeBackgroundCommandCount": 0,
-      "activeGoalCount": 0,
       "activePlanModeCount": 0,
       "activeWorkflowCount": 0
     },
@@ -83,8 +82,7 @@
     "environmentWorkspaceDisplayKind": "managed-worktree",
     "hasPendingInteraction": false,
     "runtime": {
-      "displayStatus": "idle",
-      "hostReconnectGraceExpiresAt": null
+      "displayStatus": "idle"
     }
   },
   {
@@ -102,6 +100,7 @@
     "originKind": null,
     "originPluginId": "example-orchestrator",
     "visibility": "visible",
+    "parentNotifications": "auto",
     "archivedAt": null,
     "pinnedAt": null,
     "deletedAt": null,
@@ -112,7 +111,6 @@
     "activity": {
       "activeBackgroundAgentCount": 0,
       "activeBackgroundCommandCount": 1,
-      "activeGoalCount": 0,
       "activePlanModeCount": 0,
       "activeWorkflowCount": 0
     },
@@ -127,8 +125,7 @@
     "environmentWorkspaceDisplayKind": "managed-worktree",
     "hasPendingInteraction": false,
     "runtime": {
-      "displayStatus": "idle",
-      "hostReconnectGraceExpiresAt": null
+      "displayStatus": "idle"
     }
   },
   {
@@ -146,6 +143,7 @@
     "originKind": null,
     "originPluginId": null,
     "visibility": "visible",
+    "parentNotifications": "auto",
     "archivedAt": null,
     "pinnedAt": null,
     "deletedAt": null,
@@ -156,7 +154,6 @@
     "activity": {
       "activeBackgroundAgentCount": 0,
       "activeBackgroundCommandCount": 0,
-      "activeGoalCount": 0,
       "activePlanModeCount": 0,
       "activeWorkflowCount": 0
     },
@@ -171,8 +168,7 @@
     "environmentWorkspaceDisplayKind": "other",
     "hasPendingInteraction": false,
     "runtime": {
-      "displayStatus": "idle",
-      "hostReconnectGraceExpiresAt": null
+      "displayStatus": "idle"
     }
   }
 ]
