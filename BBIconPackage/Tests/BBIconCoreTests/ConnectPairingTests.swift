@@ -14,10 +14,21 @@ struct ConnectPairingTests {
         return #"{"credential":"\#(credential)","machineId":"m-test","serverUrl":\#(url)}"#
     }
 
-    private func redeem(status: Int = 200, body: String, code: String = "ABCD-1234") async throws -> (Pairing, FakeHTTPClient) {
+    private func redeem(
+        status: Int = 200, body: String, code: String = "ABCD-1234", deviceName: String? = "Test Mac"
+    ) async throws -> (Pairing, FakeHTTPClient) {
         let http = FakeHTTPClient()
         await http.respond(Self.redeemPath, status: status, body: body)
-        return (try await ConnectPairing.redeem(code: code, http: http), http)
+        return (try await ConnectPairing.redeem(code: code, deviceName: deviceName, http: http), http)
+    }
+
+    /// The JSON body of the one request `redeem` sent for a Mac named `name`.
+    private func sentBody(deviceName name: String?) async throws -> [String: Any] {
+        let (_, http) = try await redeem(body: Self.answer(serverUrl: "https://example-mini.getbb.app"), deviceName: name)
+        let requests = await http.requests
+        try #require(requests.count == 1)
+        let object = try JSONSerialization.jsonObject(with: try #require(requests[0].httpBody))
+        return try #require(object as? [String: Any])
     }
 
     /// The error `redeem` throws for this answer, or nil if it did not throw
@@ -61,7 +72,7 @@ struct ConnectPairingTests {
 
     // MARK: - Redeem
 
-    @Test("redeems at getbb.app with the code alone, and nothing else in the request")
+    @Test("redeems at getbb.app with the code and the Mac's name, and nothing else in the request")
     func redeemRequestIsExact() async throws {
         let (_, http) = try await redeem(body: Self.answer(serverUrl: "https://example-mini.getbb.app"))
         let requests = await http.requests
@@ -73,7 +84,44 @@ struct ConnectPairingTests {
         #expect(request.value(forHTTPHeaderField: "content-type") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Origin") == nil)
         let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody)) as? [String: String]
-        #expect(body == ["code": "ABCD-1234"])
+        #expect(body == ["code": "ABCD-1234", "deviceName": "Test Mac"])
+    }
+
+    /// getbb.app revokes a pairing that has a kind and goes unused for 14
+    /// days, and bb Icon's goes unused whenever this Mac's own bb runs.
+    @Test("never sends a kind, with or without a name", arguments: ["Test Mac", nil, ""] as [String?])
+    func redeemSendsNoKind(name: String?) async throws {
+        let body = try await sentBody(deviceName: name)
+        #expect(body["kind"] == nil)
+        #expect(Set(body.keys).isSubset(of: ["code", "deviceName"]))
+    }
+
+    /// A blank name would be refused by getbb.app's `min(1)` and null by its
+    /// `optional()`, either of which refuses the whole request; so it is left out.
+    @Test("a Mac with no name sends no deviceName field at all", arguments: [nil, "", "   ", "\n\t", "\u{FEFF}"] as [String?])
+    func redeemOmitsBlankName(name: String?) async throws {
+        let body = try await sentBody(deviceName: name)
+        #expect(body.keys.sorted() == ["code"])
+    }
+
+    @Test("the Mac's name is trimmed and cut to the 128 UTF-16 units getbb.app takes", arguments: [
+        ("  Studio \n", "Studio"),
+        (String(repeating: "a", count: 128), String(repeating: "a", count: 128)),
+        (String(repeating: "a", count: 129), String(repeating: "a", count: 128)),
+        (String(repeating: "a", count: 300), String(repeating: "a", count: 128)),
+        // A cut that would leave a trailing space drops it, as getbb.app would.
+        (String(repeating: "a", count: 127) + " b", String(repeating: "a", count: 127)),
+        // 😀 is two UTF-16 units; a cut never splits one.
+        (String(repeating: "a", count: 127) + "😀", String(repeating: "a", count: 127)),
+        (String(repeating: "😀", count: 70), String(repeating: "😀", count: 64)),
+        // é as e + combining accent is one character of two units.
+        (String(repeating: "a", count: 127) + "e\u{301}", String(repeating: "a", count: 127)),
+    ])
+    func redeemTrimsName(name: String, expected: String) async throws {
+        let body = try await sentBody(deviceName: name)
+        let sent = try #require(body["deviceName"] as? String)
+        #expect(sent == expected)
+        #expect(sent.utf16.count <= 128)
     }
 
     @Test("a good answer becomes a pairing named by its server's label", arguments: [
@@ -175,7 +223,7 @@ struct ConnectPairingTests {
     func redeemTransportFailure() async {
         let failure = URLError(.notConnectedToInternet)
         do {
-            _ = try await ConnectPairing.redeem(code: "ABCD-1234", http: FailingHTTPClient(error: failure))
+            _ = try await ConnectPairing.redeem(code: "ABCD-1234", deviceName: "Test Mac", http: FailingHTTPClient(error: failure))
             Issue.record("redeem succeeded without an answer")
         } catch {
             #expect(error as? ConnectPairingError == .unreachable(errorText(failure)))
@@ -186,7 +234,7 @@ struct ConnectPairingTests {
     func redeemEmptyCode() async {
         let http = FakeHTTPClient()
         await #expect(throws: ConnectPairingError.emptyInput) {
-            try await ConnectPairing.redeem(code: "  ", http: http)
+            try await ConnectPairing.redeem(code: "  ", deviceName: "Test Mac", http: http)
         }
         #expect(await http.requests.isEmpty)
     }

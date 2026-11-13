@@ -71,7 +71,9 @@ and bb Icon says **bb is not running**. Pair it with that server instead:
    **Connect**.
 
 bb Icon becomes its own device on your bb Connect account, listed at
-getbb.app/dashboard, and the status line names the server:
+getbb.app/dashboard under this Mac's name (the one in System Settings → General
+→ Sharing, which bb Icon sends to getbb.app when it pairs), and the status line
+names the server:
 `<name> · connected`. Its credential is kept in your login keychain and
 nowhere else. After bb Icon is rebuilt or updated, macOS may ask whether it may
 use that keychain item.
@@ -94,8 +96,8 @@ One remote bb at a time.
 
 ## Install
 
-Download `BBIcon-0.2.0.zip` from the
-[v0.2.0 release](https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.0),
+Download `BBIcon-0.2.1.zip` from the
+[v0.2.1 release](https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.1),
 unzip it, and drag `BBIcon.app` into `/Applications`. It is signed and
 notarized, so it opens on any Mac without a Gatekeeper prompt. It needs macOS
 14 or later on Apple Silicon.

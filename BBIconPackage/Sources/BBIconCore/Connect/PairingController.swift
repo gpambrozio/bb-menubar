@@ -72,6 +72,9 @@ public struct ForgetReport: Equatable, Sendable {
 public final class PairingController {
     private let pairingStore: any PairingStore
     private let http: any HTTPClient
+    /// This Mac's user-visible name, asked at each pair and sent to getbb.app
+    /// as the device's name; nil or blank sends none.
+    private let deviceName: () -> String?
     private let executor: any PairingStoreExecutor
     private let threadStore: ThreadStore
     private let connection: ServerConnection
@@ -97,12 +100,14 @@ public final class PairingController {
     public init(
         store: any PairingStore,
         http: any HTTPClient,
+        deviceName: @escaping () -> String?,
         executor: any PairingStoreExecutor,
         threadStore: ThreadStore,
         connection: ServerConnection
     ) {
         self.pairingStore = store
         self.http = http
+        self.deviceName = deviceName
         self.executor = executor
         self.threadStore = threadStore
         self.connection = connection
@@ -193,7 +198,9 @@ public final class PairingController {
 
         let redeemed: Pairing
         do {
-            redeemed = try await ConnectPairing.redeem(code: ConnectPairing.parseInput(input), http: http)
+            redeemed = try await ConnectPairing.redeem(
+                code: ConnectPairing.parseInput(input), deviceName: deviceName(), http: http
+            )
         } catch {
             return .failed(errorText(error))
         }

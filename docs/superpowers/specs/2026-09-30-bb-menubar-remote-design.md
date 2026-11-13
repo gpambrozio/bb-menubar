@@ -45,9 +45,21 @@ when bb.app starts its own local server (`claimBbAppRuntimeFile`, bb 0.44.0
   mobile app uses. The code is minted on the server (`bb connect machine-code`, or
   Settings → Mobile → Add mobile device in any bb window), lasts 10 minutes, and
   works once. Redeeming it at `POST https://getbb.app/api/connect/redeem-machine` with
-  `{"code": "…"}` returns `{credential, machineId, serverUrl}` (and a `handle`, which bb
-  Icon ignores: it takes the handle from `serverUrl`). The device then appears in the
-  getbb.app dashboard's machine list, where it can be removed.
+  `{"code": "…", "deviceName": "…"}` returns `{credential, machineId, serverUrl}` (and a
+  `handle`, which bb Icon ignores: it takes the handle from `serverUrl`). The device then
+  appears in the getbb.app dashboard's device list, where it can be removed.
+- **The request names this Mac, and nothing else about it.** *(Amended 2026-11-12.)*
+  `deviceName` is the Mac's Sharing name (System Settings → General → Sharing, read with
+  `SCDynamicStoreCopyComputerName`), so this Mac's name goes to getbb.app, and the
+  dashboard lists the device by it rather than as an anonymous row. getbb.app's route
+  (`apps/web/src/routes/api.connect.redeem-machine.tsx`, from get-bb/bb#7195) takes it as
+  `z.string().trim().min(1).max(128).optional()` and refuses the whole request when it does
+  not fit, so the name is trimmed and cut to 128 UTF-16 units at a character boundary,
+  and a name left blank omits the field rather than sending `""` or `null`. The route also
+  takes a `kind` (`desktop`, `mobile`, `host`); bb Icon sends **none**. getbb.app revokes a
+  pairing that has a kind and is not used within 14 days of pairing (`isAbandonedPairing`
+  in `apps/web/src/server/api.ts`), and bb Icon's pairing sits unused for as long as this
+  Mac's own bb runs. A pairing with no kind is never revoked automatically.
 - **The open endpoint reaches every client of the server**, on every Mac and phone. There
   is no per-client target and no URL scheme.
 
