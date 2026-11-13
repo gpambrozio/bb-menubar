@@ -32,11 +32,12 @@ struct PairingControllerTests {
         let controller: PairingController
 
         /// getbb.app redeems any code as `studio`.
-        init(stored: Pairing? = nil) async {
+        /// This Mac is called `deviceName`.
+        init(stored: Pairing? = nil, deviceName: String? = "Test Mac") async {
             keychain = FakePairingStore(stored)
             connection = ServerConnection(store: threadStore, http: http, makeTransport: factory.make, clock: TestClock())
             controller = PairingController(
-                store: keychain, http: http, executor: executor, threadStore: threadStore, connection: connection
+                store: keychain, http: http, deviceName: { deviceName }, executor: executor, threadStore: threadStore, connection: connection
             )
             await http.respond(
                 PairingControllerTests.redeemPath,
@@ -91,6 +92,18 @@ struct PairingControllerTests {
         #expect(h.paired == "studio")
         #expect(h.connection.serverURL == nil, "no runtime answer yet, so no server")
         #expect(await h.sent() == [Self.redeemPath])
+    }
+
+    @Test("the Mac's name is asked at the pair and sent as the device's name", arguments: [
+        ("Test Mac" as String?, ["code": "code-test", "deviceName": "Test Mac"]),
+        (nil, ["code": "code-test"]),
+    ])
+    func pairSendsDeviceName(name: String?, expected: [String: String]) async throws {
+        let h = await Harness(deviceName: name)
+        #expect(await h.controller.pair(input: "code-test") == .paired(notice: nil))
+        let request = try #require(await h.http.requests.first)
+        let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody)) as? [String: String]
+        #expect(body == expected)
     }
 
     @Test("pairing while this Mac's own bb is in use says the pairing waits")

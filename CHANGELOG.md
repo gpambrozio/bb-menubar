@@ -7,6 +7,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
+## [Unreleased]
+
+### Changed
+
+- Pairing with a remote bb now sends this Mac's name (the one in **System
+  Settings → General → Sharing**) to getbb.app, so getbb.app/dashboard lists
+  bb Icon under that name instead of as an unnamed device.
+
 ## [0.2.0] — 2026-11-12
 
 Catches up with bb 0.49: the menu no longer shows work running on a Mac that
@@ -76,5 +84,6 @@ app.**
   getbb.app/dashboard until you remove it there.
 - The menu cannot be navigated with the keyboard.
 
+[Unreleased]: https://github.com/gpambrozio/bb-menubar/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0

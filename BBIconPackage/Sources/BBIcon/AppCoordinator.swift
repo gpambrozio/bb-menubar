@@ -2,6 +2,7 @@ import AppKit
 import BBIconCore
 import ServiceManagement
 import SwiftUI
+import SystemConfiguration
 
 /// Wiring, and only wiring. Every decision this reads from belongs to
 /// `BBIconCore`: the runtime session decides whether bb is running and where,
@@ -60,6 +61,10 @@ final class AppCoordinator {
         pairing = PairingController(
             store: pairingStore,
             http: http,
+            // The name in System Settings → General → Sharing, which is what
+            // getbb.app/dashboard lists this device as. A cheap local read,
+            // unlike `Host.current()`, which can wait on name resolution.
+            deviceName: { SCDynamicStoreCopyComputerName(nil, nil) as String? },
             executor: SerialQueuePairingStoreExecutor(label: "br.eng.gustavo.bb-menubar.keychain"),
             threadStore: store,
             connection: connection

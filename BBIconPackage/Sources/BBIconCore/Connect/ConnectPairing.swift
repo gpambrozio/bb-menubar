@@ -78,16 +78,51 @@ public enum ConnectPairing {
         return code
     }
 
-    /// Redeems `code` at getbb.app. The request carries the code and a
-    /// content type, nothing else: no credential exists yet, and bb Icon
-    /// sends no `Origin`.
+    /// The longest `deviceName` getbb.app accepts. Its redeem route
+    /// (`apps/web/src/routes/api.connect.redeem-machine.tsx` on get-bb/bb
+    /// `main`, from get-bb/bb#7195) validates the field as
+    /// `z.string().trim().min(1).max(128).optional()`, and refuses the whole
+    /// request, code unspent, as `invalid-request` when it does not fit. zod
+    /// counts JavaScript string length: UTF-16 code units.
+    static let maxDeviceNameLength = 128
+
+    /// What `deviceName` carries for a Mac named `name`: the name trimmed,
+    /// then cut to `maxDeviceNameLength` UTF-16 code units at a character
+    /// boundary, as bb's desktop app trims and slices its hostname. Nil when
+    /// nothing is left, so the field is omitted rather than refused.
+    static func deviceName(from name: String?) -> String? {
+        // JavaScript's `trim` also strips U+FEFF, which Foundation's set lacks.
+        let blank = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}"))
+        var kept = ""
+        var units = 0
+        for character in (name ?? "").trimmingCharacters(in: blank) {
+            units += character.utf16.count
+            guard units <= maxDeviceNameLength else { break }
+            kept.append(character)
+        }
+        let trimmed = kept.trimmingCharacters(in: blank)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Redeems `code` at getbb.app. The request carries the code, this Mac's
+    /// name as `deviceName` (see `deviceName(from:)`), and a content type,
+    /// nothing else: no credential exists yet, and bb Icon sends no `Origin`.
+    /// The name is what getbb.app/dashboard lists the device as; without it
+    /// the row has nothing to tell it apart.
+    ///
+    /// No `kind` is sent, though the route takes one (`desktop`, `mobile`,
+    /// `host`): getbb.app revokes a pairing that has a kind and is not used
+    /// within 14 days of pairing (`isAbandonedPairing` in
+    /// `apps/web/src/server/api.ts`), and bb Icon's pairing sits unused for
+    /// as long as this Mac's own bb is running. A pairing without a kind is
+    /// never revoked automatically.
     ///
     /// A non-2xx answer is classified by its status and, when the body is
     /// `{error}`, its wire error. bb's client reads the body as JSON first
     /// and calls any non-JSON body unreadable; here a non-JSON refusal is
     /// still classified by status, so a proxy's HTML 502 reads as getbb.app
     /// being unreachable rather than as a bad answer.
-    public static func redeem(code: String, http: any HTTPClient) async throws -> Pairing {
+    public static func redeem(code: String, deviceName name: String?, http: any HTTPClient) async throws -> Pairing {
         let code = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !code.isEmpty else { throw ConnectPairingError.emptyInput }
         var components = URLComponents()
@@ -98,7 +133,7 @@ public enum ConnectPairing {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONEncoder().encode(RedeemRequest(code: code))
+        request.httpBody = try JSONEncoder().encode(RedeemRequest(code: code, deviceName: deviceName(from: name)))
 
         let data: Data
         let response: HTTPURLResponse
@@ -166,8 +201,13 @@ public enum ConnectPairing {
         let apex: String?
     }
 
+    /// Exactly the fields sent. A nil `deviceName` is left out of the JSON
+    /// (synthesized `Encodable` uses `encodeIfPresent`), never sent as null,
+    /// which the route's `optional()` would refuse. There is no `kind` here
+    /// on purpose; see `redeem`.
     private struct RedeemRequest: Encodable {
         let code: String
+        let deviceName: String?
     }
 
     private struct RedeemAnswer: Decodable {
