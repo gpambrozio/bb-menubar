@@ -22,7 +22,7 @@ public enum BBAPIError: MessageError, Equatable {
     }
 }
 
-/// bb 0.44.0's HTTP surface, as far as this app uses it: the snapshot reads
+/// bb 0.49.0's HTTP surface, as far as this app uses it: the snapshot reads
 /// and the open-thread request `bb thread open` makes.
 ///
 /// A server target is a base URL plus `headers`, which ride on every request:
@@ -92,7 +92,7 @@ public struct BBAPI: Sendable {
     /// `bb thread open <id>` does. bb answers how many clients it reached;
     /// none is an error, because the click did nothing the user can see.
     ///
-    /// bb 0.44.0 counts every connected `/ws` socket in `delivered`, bb Icon's
+    /// bb 0.49.0 counts every connected `/ws` socket in `delivered`, bb Icon's
     /// own realtime socket included, so the count is an upper bound on the
     /// windows that navigated. `.noWindow` is still right when it fires, but
     /// it fires only when nothing at all is connected.

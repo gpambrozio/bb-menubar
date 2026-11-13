@@ -3,7 +3,10 @@
 Date: 2026-09-30. Status: **approved by the user, 2026-09-30.** Amended the same day after
 the first live test against the relay: `/ws` takes a desktop session cookie, not the machine
 header; a device cannot revoke itself; the relay's answers for a revoked pairing are now
-known.
+known. Amended 2026-11-12 for bb 0.49.0: bb 0.45 removed the `mobileApp` experiment and moved
+"Add mobile device" to Settings → Mobile, so the pairing instructions now say so and drop
+the experiment step. The relay surfaces below were re-checked against bb 0.49.0 and are
+unchanged; their file and line citations remain 0.44.0's.
 
 This amends `2026-09-29-bb-menubar-design.md` and lifts one item from its Deferred list:
 "a bb.app connected to a **remote** bb server (bb Connect)". Where this document is silent,
@@ -40,7 +43,7 @@ when bb.app starts its own local server (`claimBbAppRuntimeFile`, bb 0.44.0
   not have that credential.
 - **A device gets its own credential from a one-time machine code** — the flow bb's
   mobile app uses. The code is minted on the server (`bb connect machine-code`, or
-  Settings → Remote access → Add mobile device in any bb window), lasts 10 minutes, and
+  Settings → Mobile → Add mobile device in any bb window), lasts 10 minutes, and
   works once. Redeeming it at `POST https://getbb.app/api/connect/redeem-machine` with
   `{"code": "…"}` returns `{credential, machineId, serverUrl}` (and a `handle`, which bb
   Icon ignores: it takes the handle from `serverUrl`). The device then appears in the
@@ -77,8 +80,8 @@ A new footer row, **Connect to a remote bb…**, appears while there is no pairi
 a small window:
 
 > Enter a machine code from the bb you want to watch. In any bb window, open
-> Settings → Remote access → Add mobile device; or, on the Mac running bb, run
-> `bb settings experiment mobileApp true` and then `bb connect machine-code`.
+> Settings → Mobile → Add mobile device; or, on the Mac running bb, run
+> `bb connect machine-code`.
 > Codes last 10 minutes and work once.
 >
 > [ code field ] [Connect]

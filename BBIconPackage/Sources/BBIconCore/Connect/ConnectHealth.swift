@@ -41,7 +41,7 @@ public enum ConnectHealthFinding: Equatable, Sendable {
     }
 }
 
-/// The `/api/connect/servers` probe. bb 0.44.0's own client for it is
+/// The `/api/connect/servers` probe. bb 0.49.0's own client for it is
 /// `@bb/connect-client/src/list-servers.ts`; the request, the answer's shape,
 /// and which statuses mean what are copied from there.
 public enum ConnectHealth {

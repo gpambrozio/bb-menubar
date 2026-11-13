@@ -3,6 +3,11 @@
 /// A thread row with every field defaulted, so a test names only what it is
 /// about. The defaults read as an idle, read, visible thread: `lastReadAt` 2
 /// is after `latestAttentionAt` 1.
+///
+/// `offline` is the runtime bb reports for a thread whose machine went
+/// offline mid-turn; it is only ever seen with `status: .active`.
+let offline = ThreadRuntime(displayStatus: "waiting-for-host")
+
 func thread(
     _ id: String = "thr_a",
     status: ThreadStatus = .idle,
@@ -16,7 +21,8 @@ func thread(
     projectId: String = "proj_a",
     visibility: String = "visible",
     archivedAt: Double? = nil,
-    deletedAt: Double? = nil
+    deletedAt: Double? = nil,
+    runtime: ThreadRuntime = .unknown
 ) -> ThreadRow {
     ThreadRow(
         id: id,
@@ -31,6 +37,7 @@ func thread(
         latestAttentionAt: latestAttentionAt,
         createdAt: createdAt,
         hasPendingInteraction: pending,
-        activity: activity
+        activity: activity,
+        runtime: runtime
     )
 }

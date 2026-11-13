@@ -7,6 +7,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
+## [0.2.0] — 2026-11-12
+
+Catches up with bb 0.49: the menu no longer shows work running on a Mac that
+has gone to sleep, and pairing with a remote bb points to where bb now keeps
+its machine codes.
+
+### Changed
+
+- Built against bb 0.49.0.
+- A thread whose Mac went offline in the middle of its work — a laptop that went
+  to sleep, say — now says **machine offline** beside its project. It stays
+  under **Working**, because it picks up again when that Mac comes back, but the
+  icon no longer shows work running for it all night.
+
+### Fixed
+
+- **Connect to a remote bb…** told you to turn on a bb setting that bb 0.45
+  removed, and to look for the machine code where bb no longer shows it. It now
+  points to **Settings → Mobile → Add mobile device**, or `bb connect
+  machine-code` on the Mac running bb.
+
 ## [0.1.0] — 2026-09-30
 
 The first version. bb Icon puts a small icon in your Mac's menu bar that tells you,
@@ -55,4 +76,5 @@ app.**
   getbb.app/dashboard until you remove it there.
 - The menu cannot be navigated with the keyboard.
 
+[0.2.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0

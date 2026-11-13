@@ -3,11 +3,11 @@ import Testing
 @testable import BBIconCore
 
 struct RuntimeFileTests {
-    /// The shape bb 0.44.0 writes, as recorded in the spec.
+    /// The shape bb 0.49.0 writes, as recorded in the spec.
     static let recorded = #"""
     { "entryPath": "/Applications/bb.app/Contents/Resources/bb-app-bridge.mjs", "pid": 16746,
       "serverUrl": "http://127.0.0.1:38886", "startedAt": "2026-09-29T12:00:00.000Z",
-      "surface": "desktop", "version": "0.44.0" }
+      "surface": "desktop", "version": "0.49.0" }
     """#
 
     static func json(pid: String = "16746", serverUrl: String = #""http://127.0.0.1:38886""#) -> Data {
@@ -31,7 +31,7 @@ struct RuntimeFileTests {
         let info = try RuntimeFile.parse(Data(Self.recorded.utf8))
         #expect(info.pid == 16746)
         #expect(info.serverURL == URL(string: "http://127.0.0.1:38886"))
-        #expect(info.version == "0.44.0")
+        #expect(info.version == "0.49.0")
     }
 
     @Test("version is optional, and a version that is not a string is dropped")

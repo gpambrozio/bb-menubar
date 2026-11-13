@@ -70,14 +70,57 @@ struct BucketTests {
         ),
         BucketCase(
             name: "unread idle with busy activity is ready to review, because rule 3 precedes rule 4",
-            row: thread(status: .idle, lastReadAt: unread, activity: ThreadActivity(activeGoalCount: 1)),
+            row: thread(status: .idle, lastReadAt: unread, activity: ThreadActivity(activePlanModeCount: 1)),
             expected: .readyToReview
+        ),
+        BucketCase(
+            name: "active while its machine is offline stays working",
+            row: thread(status: .active, runtime: offline),
+            expected: .working
+        ),
+        BucketCase(
+            name: "a pending interaction on an offline machine still needs input",
+            row: thread(status: .active, pending: true, runtime: offline),
+            expected: .needsInput
         ),
     ]
 
     @Test("each thread lands in the first bucket whose rule matches", arguments: bucketCases)
     func bucket(_ testCase: BucketCase) {
         #expect(BucketRule.bucket(for: testCase.row) == testCase.expected)
+    }
+
+    // MARK: - Running now
+
+    @Test(
+        "a working thread runs now unless the only thing running is on an offline machine",
+        arguments: [
+            (thread(status: .active), true),
+            (thread(status: .active, runtime: ThreadRuntime(displayStatus: "active")), true),
+            (thread(status: .starting), true),
+            (thread(status: .pending), true),
+            (thread(status: .active, runtime: offline), false),
+            // bb's own rule still counts background activity as working.
+            (thread(status: .active, activity: ThreadActivity(activeWorkflowCount: 1), runtime: offline), true),
+            (thread(status: .idle, activity: ThreadActivity(activeBackgroundAgentCount: 1)), true),
+            (thread(status: .idle), false),
+            // A display status this build does not know changes nothing.
+            (thread(status: .active, runtime: ThreadRuntime(displayStatus: "hibernating")), true),
+        ]
+    )
+    func isRunningNow(_ row: ThreadRow, _ expected: Bool) {
+        #expect(BucketRule.isRunningNow(row) == expected)
+    }
+
+    @Test("only waiting-for-host marks a thread's machine offline", arguments: [
+        (ThreadRuntime.unknown, false),
+        (ThreadRuntime(displayStatus: "active"), false),
+        (ThreadRuntime(displayStatus: "provisioning"), false),
+        (ThreadRuntime(displayStatus: "Waiting-For-Host"), false),
+        (offline, true),
+    ])
+    func isWaitingForHost(_ runtime: ThreadRuntime, _ expected: Bool) {
+        #expect(BucketRule.isWaitingForHost(thread(status: .active, runtime: runtime)) == expected)
     }
 
     // MARK: - List order

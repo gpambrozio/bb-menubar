@@ -88,9 +88,16 @@ public enum MenuModel {
     /// What separates the parts of a thread row.
     static let partSeparator = "  ·  "
 
-    /// A thread row: its title and its project. Nothing else.
+    /// The note on the row of a thread whose machine is offline, so a thread
+    /// bb still calls active does not read as running.
+    static let machineOfflineNote = "machine offline"
+
+    /// A thread row: its title and its project, then `machine offline` when
+    /// its machine is. Nothing else.
     public static func rowLabel(_ row: TrayThreadRow) -> String {
-        [row.label, row.projectName].joined(separator: partSeparator)
+        var parts = [row.label, row.projectName]
+        if row.machineOffline { parts.append(machineOfflineNote) }
+        return parts.joined(separator: partSeparator)
     }
 
     /// The whole menu, in order. Every action lives here: a menu bar item that

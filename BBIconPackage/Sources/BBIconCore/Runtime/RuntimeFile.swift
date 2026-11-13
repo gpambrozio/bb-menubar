@@ -32,7 +32,7 @@ public enum RuntimeFileError: MessageError {
 ///
 ///     { "entryPath": "…/bb-app-bridge.mjs", "pid": 16746,
 ///       "serverUrl": "http://127.0.0.1:38886", "startedAt": "…",
-///       "surface": "desktop", "version": "0.44.0" }
+///       "surface": "desktop", "version": "0.49.0" }
 ///
 /// Only `pid` and `serverUrl` are required. Every other field is ignored, so
 /// a bb that adds one does not break discovery.

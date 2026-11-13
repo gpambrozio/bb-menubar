@@ -188,6 +188,12 @@ struct MenuModelTests {
         #expect(MenuModel.rowLabel(row(label: "Migrate schema", projectName: "api")) == "Migrate schema  ·  api")
     }
 
+    @Test("says so after the project when the thread's machine is offline")
+    func offlineRowLabel() {
+        let offlineRow = TrayThreadRow(threadId: "thr_a", label: "Migrate schema", projectName: "api", machineOffline: true)
+        #expect(MenuModel.rowLabel(offlineRow) == "Migrate schema  ·  api  ·  machine offline")
+    }
+
     @Test("always ends with the footer, and the login item reflects the state it was given")
     func footer() {
         let items = build(model(), loginItemEnabled: true)

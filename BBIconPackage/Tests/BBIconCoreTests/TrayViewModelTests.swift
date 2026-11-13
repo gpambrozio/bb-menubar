@@ -77,6 +77,32 @@ struct TrayViewModelTests {
         #expect(build(state([done])).icon == .done)
     }
 
+    @Test("passes over a Working section whose threads all wait on offline machines")
+    func offlineWorkingDoesNotDrawTheGlyph() {
+        let stranded = thread("thr_o", status: .active, runtime: offline)
+        // The thread is still listed under Working.
+        let model = build(state([done, stranded]))
+        #expect(model.sections.map(\.bucket) == [.working, .done])
+        #expect(model.icon == .done)
+        #expect(model.count == 0)
+        #expect(build(state([stranded])).icon == .done)
+        #expect(build(state([readyToReview, stranded])).icon == .readyToReview)
+        // One thread running anywhere in Working is enough to draw it.
+        #expect(build(state([done, stranded, working])).icon == .working)
+        let busy = thread("thr_b", status: .active, activity: ThreadActivity(activeBackgroundCommandCount: 1), runtime: offline)
+        #expect(build(state([done, busy])).icon == .working)
+    }
+
+    @Test("a running thread past the Working cap still draws the glyph")
+    func runningPastTheCapDrawsTheGlyph() throws {
+        let stranded = (0..<15).map { thread(String(format: "thr_%02d", $0), status: .active, latestAttentionAt: 10, runtime: offline) }
+        let model = build(state(stranded + [thread("thr_old", status: .active, latestAttentionAt: 1)]))
+        let section = try #require(model.sections.first)
+        #expect(section.overflow == 1)
+        #expect(!section.rows.contains { $0.threadId == "thr_old" })
+        #expect(model.icon == .working)
+    }
+
     @Test("counts needs input, failed, and ready to review, never working or done")
     func countIsThreeUrgentBuckets() {
         let model = build(state([done, working, readyToReview, failed, needsInput]))
@@ -175,6 +201,15 @@ struct TrayViewModelTests {
         let row = try #require(build(state([thread("thr_x", title: "Fix login")])).sections.first?.rows.first)
         #expect(row == TrayThreadRow(threadId: "thr_x", label: "Fix login", projectName: "web-app"))
         #expect(row.id == "thr_x")
+        #expect(!row.machineOffline)
+    }
+
+    @Test("marks the row of a thread whose machine is offline")
+    func rowMarksOfflineMachine() throws {
+        let rows = build(state([thread("thr_o", status: .active, runtime: offline), working])).sections.first?.rows ?? []
+        // Both stay in Working, in bb's order (equal times fall back to id).
+        #expect(rows.map(\.threadId) == ["thr_o", "thr_w"])
+        #expect(rows.map(\.machineOffline) == [true, false])
     }
 
     /// (title, titleFallback, expected). bb stores `""` as well as null for an
