@@ -7,7 +7,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
-## [Unreleased]
+## [0.2.0] — 2026-11-12
+
+Catches up with bb 0.49: the menu no longer shows work running on a Mac that
+has gone to sleep, and pairing with a remote bb points to where bb now keeps
+its machine codes.
 
 ### Changed
 
@@ -72,5 +76,5 @@ app.**
   getbb.app/dashboard until you remove it there.
 - The menu cannot be navigated with the keyboard.
 
-[Unreleased]: https://github.com/gpambrozio/bb-menubar/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0
