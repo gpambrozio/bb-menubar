@@ -57,13 +57,23 @@ public enum BucketRule {
         (isRunning(t.status) && !isWaitingForHost(t)) || t.activity.isBusy
     }
 
-    /// bb's chronological list order: `latestAttentionAt` descending, then
-    /// `createdAt` descending, then `id` ascending, so every pair of distinct
-    /// rows has one order. bb also floats `active` threads to the top, but
-    /// within a section every thread shares a status class, so that step is
-    /// left out. A strict order, usable directly with `sorted(by:)`.
+    /// bb's list order, copied from `compareStandardThreads` in bb's
+    /// `plugins/thread-list/app/model/project-thread-groups.ts` (the same at
+    /// desktop-v0.49.0 and desktop-v0.50.1). `active` threads come first,
+    /// newest `createdAt` first, so a thread that starts a new turn keeps its
+    /// place. Every other thread follows by `latestAttentionAt` descending,
+    /// then `createdAt` descending. `id` ascending breaks any remaining tie, so
+    /// every pair of distinct rows has one order. Working mixes `active` with
+    /// `starting`, `stopping`, `pending`, and idle threads with background
+    /// work, so the first step matters there. A strict order, usable directly
+    /// with `sorted(by:)`.
     public static func listOrder(_ a: ThreadRow, _ b: ThreadRow) -> Bool {
-        if a.latestAttentionAt != b.latestAttentionAt { return a.latestAttentionAt > b.latestAttentionAt }
+        let aIsActive = a.status == .active
+        let bIsActive = b.status == .active
+        if aIsActive != bIsActive { return aIsActive }
+        if !aIsActive && a.latestAttentionAt != b.latestAttentionAt {
+            return a.latestAttentionAt > b.latestAttentionAt
+        }
         if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
         return a.id < b.id
     }

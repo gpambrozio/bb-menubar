@@ -150,4 +150,31 @@ struct BucketTests {
         // Strict: a row never sorts before itself.
         #expect(!BucketRule.listOrder(first, first))
     }
+
+    @Test("an active thread comes before any other status, whatever its attention", arguments: [
+        ThreadStatus.starting, .stopping, .pending, .idle, .error,
+    ])
+    func activeFirst(_ other: ThreadStatus) {
+        let active = thread("thr_b", status: .active, latestAttentionAt: 1, createdAt: 1)
+        let rest = thread("thr_a", status: other, latestAttentionAt: 9, createdAt: 9)
+        #expect(BucketRule.listOrder(active, rest))
+        #expect(!BucketRule.listOrder(rest, active))
+    }
+
+    @Test("active threads sort by creation, newest first, not by attention")
+    func activeByCreatedAt() {
+        // The older thread started a new turn, so its attention is newer.
+        let newer = thread("thr_b", status: .active, latestAttentionAt: 3, createdAt: 5)
+        let older = thread("thr_a", status: .active, latestAttentionAt: 8, createdAt: 2)
+        #expect(BucketRule.listOrder(newer, older))
+        #expect(!BucketRule.listOrder(older, newer))
+    }
+
+    @Test("active threads created together fall back to id, ascending")
+    func activeIdBreaksTies() {
+        let first = thread("thr_a", status: .active, latestAttentionAt: 1, createdAt: 4)
+        let second = thread("thr_b", status: .active, latestAttentionAt: 9, createdAt: 4)
+        #expect(BucketRule.listOrder(first, second))
+        #expect(!BucketRule.listOrder(second, first))
+    }
 }

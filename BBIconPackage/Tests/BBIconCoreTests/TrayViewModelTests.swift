@@ -164,6 +164,25 @@ struct TrayViewModelTests {
         #expect(section.rows.map(\.label) == ["3", "2", "1"])
     }
 
+    @Test("puts active threads first in Working, newest created first, as bb's sidebar does")
+    func workingPutsActiveFirst() throws {
+        let model = build(state([
+            // Older, but it started a new turn, so its attention is recent.
+            thread("thr_old", status: .active, latestAttentionAt: 10, createdAt: 1, title: "old"),
+            thread("thr_new", status: .active, latestAttentionAt: 6, createdAt: 5, title: "new"),
+            thread("thr_start", status: .starting, latestAttentionAt: 20, createdAt: 9, title: "start"),
+            // Idle and read, kept in Working by its background work.
+            thread(
+                "thr_bg", lastReadAt: 15, latestAttentionAt: 15, createdAt: 2,
+                activity: ThreadActivity(activeBackgroundAgentCount: 1), title: "bg"
+            ),
+            thread("thr_pend", status: .pending, latestAttentionAt: 8, createdAt: 3, title: "pend"),
+        ]))
+        let section = try #require(model.sections.first)
+        #expect(section.bucket == .working)
+        #expect(section.rows.map(\.label) == ["new", "old", "start", "bg", "pend"])
+    }
+
     @Test("caps a section at 15 rows and names the rest")
     func capsAt15WithOverflow() throws {
         let many = (0..<17).map { thread(String(format: "thr_%02d", $0), pending: true) }
