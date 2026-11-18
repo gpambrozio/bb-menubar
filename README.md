@@ -86,6 +86,11 @@ use that keychain item.
 - **When the server cannot be reached**, the menu says why: the pairing was
   revoked, the Mac running the server is asleep or bb is closed there, or
   getbb.app itself could not be reached. bb Icon keeps retrying on its own.
+- **getbb.app/dashboard's Remove N unused button removes bb Icon too** once it
+  has gone 14 days without watching the server, for instance because this
+  Mac's own bb was running. The menu then says bb Connect no longer accepts the
+  pairing. To pair again, choose **Forget `<name>`…**, then **Forget**, and
+  pair with a new machine code as above.
 - **To stop watching it**, choose **Forget `<name>`…**. bb Icon stops watching
   it and deletes the credential from your keychain. bb Connect does not let a
   device remove itself, so bb Icon stays listed as a device at
