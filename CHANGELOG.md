@@ -7,6 +7,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
+## [0.2.2] — 2026-11-18
+
+Threads under **Working** now appear in the same order as in bb's sidebar.
+
+### Fixed
+
+- **Working** listed every thread by when it last needed you, so an older
+  thread that started a new turn could jump ahead of newer ones. bb puts
+  threads in the middle of a turn first, newest first, and bb Icon now does too.
+
 ## [0.2.1] — 2026-11-12
 
 bb Icon now tells getbb.app which Mac it is, so you can find it among your
@@ -87,6 +97,7 @@ app.**
   getbb.app/dashboard until you remove it there.
 - The menu cannot be navigated with the keyboard.
 
+[0.2.2]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.2
 [0.2.1]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.1
 [0.2.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gpambrozio/bb-menubar/releases/tag/v0.1.0
