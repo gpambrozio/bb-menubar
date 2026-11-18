@@ -84,10 +84,12 @@ into `BBIconCore` instead.
   acceptable failure mode.
 - **The unread rule, the list order, and the running test are copied from bb, not invented.** Unread
   is `(lastReadAt ?? 0) < latestAttentionAt`, the negation of bb 0.49.0's own read test
-  (`(e.lastReadAt??0)>=e.latestAttentionAt`). Rows within a section sort by
-  `latestAttentionAt` descending, then `createdAt` descending, then `id` ascending, as bb's
-  list does. A Working thread whose `runtime.displayStatus` is `waiting-for-host` (its
-  machine is offline) is not running, as bb 0.49.0's `RUNNING_RUNTIME_STATUSES` says: it
+  (`(e.lastReadAt??0)>=e.latestAttentionAt`). Rows within a section sort as bb's
+  `compareStandardThreads` does: `active` threads first, by `createdAt` descending; every
+  other thread by `latestAttentionAt` descending, then `createdAt` descending; `id`
+  ascending last. Working mixes `active` with other statuses, so the first step matters.
+  A Working thread whose `runtime.displayStatus` is `waiting-for-host` (its machine is
+  offline) is not running, as bb 0.49.0's `RUNNING_RUNTIME_STATUSES` says: it
   keeps its Working row, marked `machine offline`, but draws the Working glyph only through
   background activity. All three live in `Tray/Bucket.swift`. If bb changes any of them,
   copy the new one from its bundle or sources and cite it; do not improve on it.

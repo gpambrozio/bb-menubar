@@ -3,7 +3,9 @@
 Date: 2026-09-29. Status: **approved design, pending spec review.** Amended 2026-11-12
 for bb 0.49.0: the pin moves to 0.49.0, and a thread whose machine is offline stays in
 Working with a `machine offline` note but no longer spins the Working glyph by itself
-(bucket rule 4, the icon rule, and the menu rows).
+(bucket rule 4, the icon rule, and the menu rows). Amended 2026-11-18: rows within a
+section follow bb's whole list order, `active` threads first by creation, which this
+design had wrongly called moot.
 
 bb Icon is a macOS menu-bar indicator for [bb](https://getbb.app) threads. It shows
 whether any thread needs you, and opens a thread in the bb desktop app on click. It is a
@@ -197,11 +199,15 @@ Quit bb Icon            ⌘Q
 - Rows show the thread's `title`, else `titleFallback`, else its id, then the
   project name, then `machine offline` when the thread is waiting for its host
   (`Refactor terminal input  ·  web-app  ·  machine offline`). Nothing else.
-- Rows within a section use bb's own chronological list order, copied from the same
-  bundle: `latestAttentionAt` descending, then `createdAt` descending, then `id`
-  ascending. (bb's list additionally floats `active` threads to the top; within a
-  section every thread shares a status class, so that step is moot here.) The API's
-  own response order is not relied on.
+- Rows within a section use bb's own list order, copied from `compareStandardThreads`
+  in bb's `plugins/thread-list/app/model/project-thread-groups.ts` (the same at
+  desktop-v0.49.0 and desktop-v0.50.1): `active` threads first, by `createdAt`
+  descending; then every other thread by `latestAttentionAt` descending, then
+  `createdAt` descending; `id` ascending breaks any remaining tie. The `active` step
+  matters: Working mixes `active` threads with `starting`, `stopping`, `pending`, and
+  idle threads with background work, and an older thread that starts a new turn keeps
+  its place by creation, as in bb's sidebar. The API's own response order is not
+  relied on.
 - Empty sections are omitted. Each section caps at 15 rows with a visible
   `…and N more` row that opens bb. No silent caps; every row keyed by thread id.
 - The status line reads `connected`, `connecting`, `reconnecting`, or
