@@ -233,6 +233,11 @@ running the app. Say so plainly rather than narrating a check you did not perfor
   replaced pairing, and a pairing whose save failed each leave a device listed at
   getbb.app/dashboard, holding a machine slot, and say so with a pointer to remove it
   there.
+- **getbb.app/dashboard's "Remove N unused" also revokes bb Icon's pairing** once its
+  device has been offline and unseen for 14 days (`MACHINE_UNUSED_AFTER_MS` in bb's
+  `packages/connect-db`). It is marked seen when it mints a desktop session to watch the
+  server, so a pairing sits idle whenever this Mac's own bb runs. The probe then names it revoked; the user pairs
+  again by choosing Forget, then Connect to a remote bb… with a new machine code.
 - **The relay's answer for an offline server has not been seen live.** The probe classifies
   it from bb's sources. The answers for a revoked pairing were seen on 2026-09-30 and match
   the design's table.
